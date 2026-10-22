@@ -1,8 +1,18 @@
 import Fastify from 'fastify';
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createKrillinCodexLlmGateway } from '../../src/creator/krillin/codex-llm-gateway.js';
 
 describe('Krillin Codex LLM gateway', () => {
+  let root = '';
+
+  afterEach(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+    root = '';
+  });
+
   it('authenticates and converts a Codex final message to chat completions', async () => {
     const run = vi.fn((input: { onNotification?(value: Record<string, unknown>): void }) => {
       input.onNotification?.({
@@ -105,4 +115,95 @@ describe('Krillin Codex LLM gateway', () => {
     await gateway.close();
     await server.close();
   });
+
+  it('uses the first available ChatGPT model when the configured model is stale', async () => {
+    root = await mkdtemp(join(tmpdir(), 'krillin-codex-model-'));
+    await writeFile(join(root, 'auth.json'), JSON.stringify({
+      auth_mode: 'chatgpt', tokens: { access_token: 'oauth-secret' }
+    }));
+    await writeFile(join(root, 'config.toml'), 'model = "stale-model"\n');
+    await writeFile(join(root, 'models_cache.json'), JSON.stringify({
+      models: [
+        { slug: 'hidden-model', visibility: 'hide', supported_in_api: true, priority: 1 },
+        { slug: 'fallback-model', visibility: 'list', supported_in_api: true, priority: 2 },
+        { slug: 'later-model', visibility: 'list', supported_in_api: true, priority: 9 }
+      ]
+    }));
+    const run = vi.fn((input: { onNotification?(value: Record<string, unknown>): void }) => {
+      input.onNotification?.({
+        method: 'item/completed',
+        params: { item: { id: 'answer', type: 'agentMessage', text: 'translated' } }
+      });
+      return { cancel() {}, result: Promise.resolve(completedResult()) };
+    });
+    const gateway = createKrillinCodexLlmGateway({
+      codexBin: '/bundled/codex', codexHome: root, cwd: root,
+      createHost: vi.fn(() => fakeHost(run))
+    });
+    const server = Fastify();
+    await gateway.register(server);
+    const config = gateway.config('http://127.0.0.1:1234');
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/internal/krillin-llm/v1/chat/completions',
+      headers: { authorization: `Bearer ${config.apiKey}` },
+      payload: { messages: [{ role: 'user', content: 'Translate' }] }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ model: 'fallback-model' }));
+    await gateway.close();
+    await server.close();
+  });
+
+  it('returns the underlying Codex turn error when completion fails', async () => {
+    const run = vi.fn((input: { onNotification?(value: Record<string, unknown>): void }) => {
+      input.onNotification?.({
+        method: 'turn/completed',
+        params: { turn: { error: { message: 'Selected model is unavailable', additionalDetails: null } } }
+      });
+      return { cancel() {}, result: Promise.resolve({ ...completedResult(), turnStatus: 'failed' as const }) };
+    });
+    const gateway = createKrillinCodexLlmGateway({
+      codexBin: '/bundled/codex', codexHome: '/missing/codex-home', cwd: '/workspace',
+      createHost: vi.fn(() => fakeHost(run))
+    });
+    const server = Fastify();
+    await gateway.register(server);
+    const config = gateway.config('http://127.0.0.1:1234');
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/internal/krillin-llm/v1/chat/completions',
+      headers: { authorization: `Bearer ${config.apiKey}` },
+      payload: { messages: [{ role: 'user', content: 'Translate' }] }
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json().error.message).toContain('Selected model is unavailable');
+    await gateway.close();
+    await server.close();
+  });
 });
+
+function completedResult() {
+  return {
+    threadId: 'thread-1', turnId: 'turn-1', turnStatus: 'completed' as const,
+    stderr: '', terminationReason: 'completed' as const,
+    outputTruncation: {
+      stderr: { truncated: false, droppedBytes: 0, droppedItems: 0 },
+      frames: { truncated: false, droppedBytes: 0, droppedItems: 0 }
+    }
+  };
+}
+
+function fakeHost(run: ReturnType<typeof vi.fn>) {
+  return {
+    pid: 1,
+    started: Promise.resolve(1),
+    run,
+    isReusable: () => true,
+    close: vi.fn(async () => undefined)
+  };
+}

@@ -43,8 +43,12 @@ func (c *Client) ChatCompletionContextWithMaxTokens(ctx context.Context, query s
 				Content: query,
 			},
 		},
-		MaxTokens:      maxTokens,
 		ResponseFormat: responseFormat,
+	}
+	if useMaxCompletionTokens(req.Model) {
+		req.MaxCompletionTokens = maxTokens
+	} else {
+		req.MaxTokens = maxTokens
 	}
 	// DeepSeek V4 的推理可能耗尽字幕 JSON 的输出预算。
 	switch strings.ToLower(strings.TrimSpace(req.Model)) {
@@ -54,6 +58,16 @@ func (c *Client) ChatCompletionContextWithMaxTokens(ctx context.Context, query s
 	}
 
 	response, err := c.client.CreateChatCompletion(ctx, req)
+	if err != nil && isTokenLimitParameterError(err) {
+		if req.MaxCompletionTokens > 0 {
+			req.MaxTokens = req.MaxCompletionTokens
+			req.MaxCompletionTokens = 0
+		} else {
+			req.MaxCompletionTokens = req.MaxTokens
+			req.MaxTokens = 0
+		}
+		response, err = c.client.CreateChatCompletion(ctx, req)
+	}
 	if err != nil {
 		log.GetLogger().Error("openai chat completion failed", zap.Error(err))
 		return "", normalizeChatCompletionError(err)
@@ -109,4 +123,20 @@ func parseJSONResponse(jsonStr string) (string, error) {
 	}
 
 	return result.String(), nil
+}
+
+func useMaxCompletionTokens(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") || strings.HasPrefix(m, "gpt-5")
+}
+
+func isTokenLimitParameterError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "MaxTokens") ||
+		strings.Contains(msg, "max_tokens") ||
+		strings.Contains(msg, "MaxCompletionTokens") ||
+		strings.Contains(msg, "max_completion_tokens")
 }

@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parse } from '@iarna/toml';
 import {
   createCodexAppServerHost,
   type CodexAppServerHost,
@@ -120,7 +122,13 @@ export function createKrillinCodexLlmGateway(input: {
         await slot.host.started;
         slot.configurationVersion = configuration?.version;
       }
-      return await complete({ host: slot.host, cwd: input.cwd, messages, jsonMode });
+      return await complete({
+        host: slot.host,
+        codexHome: configuration?.codexHome ?? input.codexHome,
+        cwd: input.cwd,
+        messages,
+        jsonMode
+      });
     } catch (error) {
       if (slot.host?.isReusable() !== true) {
         await slot.host?.close('krillin-llm-host-failed').catch(() => undefined);
@@ -159,14 +167,17 @@ export function createKrillinCodexLlmGateway(input: {
 
 async function complete(input: {
   host: CodexAppServerHost;
+  codexHome: string;
   cwd: string;
   messages: ChatMessage[];
   jsonMode: boolean;
 }): Promise<string> {
   const messages = new Map<string, string>();
+  let failureMessage: string | undefined;
   const process = input.host.run({
     cwd: resolve(input.cwd),
     sandbox: 'read-only',
+    model: resolveAvailableChatGptModel(input.codexHome),
     prompt: conversationPrompt(input.messages),
     developerInstructions: input.jsonMode
       ? 'Return exactly one valid JSON value. Do not use Markdown fences or commentary. Do not call tools.'
@@ -175,15 +186,61 @@ async function complete(input: {
     inactivityTimeoutMs: 90_000,
     onNotification(notification) {
       recordAgentMessage(messages, notification);
+      failureMessage = readTurnFailureMessage(notification) ?? failureMessage;
     }
   });
   const result = await process.result;
   const content = [...messages.values()].at(-1)?.trim() ?? '';
   if (result.turnStatus !== 'completed') {
-    throw new Error(`Codex LLM completion ended with status ${result.turnStatus}`);
+    throw new Error([
+      `Codex LLM completion ended with status ${result.turnStatus}`,
+      failureMessage
+    ].filter(Boolean).join(': '));
   }
   if (content === '') throw new Error('Codex LLM completion returned an empty response');
   return content;
+}
+
+function resolveAvailableChatGptModel(codexHome: string): string | undefined {
+  try {
+    const auth = JSON.parse(readFileSync(resolve(codexHome, 'auth.json'), 'utf8')) as unknown;
+    const authRecord = record(auth);
+    const tokens = record(authRecord?.tokens);
+    if (authRecord?.auth_mode === 'apikey'
+      || (authRecord?.auth_mode !== 'chatgpt' && typeof tokens?.access_token !== 'string')) {
+      return undefined;
+    }
+    const config = parse(readFileSync(resolve(codexHome, 'config.toml'), 'utf8'));
+    const configured = typeof config.model === 'string' ? config.model.trim() : '';
+    const catalog = record(JSON.parse(readFileSync(resolve(codexHome, 'models_cache.json'), 'utf8')));
+    const models = Array.isArray(catalog?.models) ? catalog.models.flatMap(candidate => {
+      const model = record(candidate);
+      return typeof model?.slug === 'string' && model.supported_in_api === true
+        ? [{
+            slug: model.slug,
+            visibility: model.visibility,
+            priority: typeof model.priority === 'number' ? model.priority : Number.MAX_SAFE_INTEGER
+          }]
+        : [];
+    }) : [];
+    if (models.some(model => model.slug === configured)) return configured;
+    return models
+      .filter(model => model.visibility === 'list')
+      .sort((left, right) => left.priority - right.priority)[0]?.slug;
+  } catch {
+    return undefined;
+  }
+}
+
+function readTurnFailureMessage(notification: Record<string, unknown>): string | undefined {
+  if (notification.method !== 'turn/completed') return undefined;
+  const turn = record(record(notification.params)?.turn);
+  const error = record(turn?.error);
+  const message = typeof error?.message === 'string' ? error.message.trim() : '';
+  const details = typeof error?.additionalDetails === 'string'
+    ? error.additionalDetails.trim()
+    : '';
+  return [message, details].filter(Boolean).join(' — ') || undefined;
 }
 
 function chatCompletion(id: string, content: string) {

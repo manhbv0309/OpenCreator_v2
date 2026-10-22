@@ -58,6 +58,76 @@ func TestChatCompletionSendsRequestedOutputBudget(t *testing.T) {
 	}
 }
 
+func TestChatCompletionUsesMaxCompletionTokensForReasoningModels(t *testing.T) {
+	for _, model := range []string{"gpt-5.5", "o1-preview", "o3-mini", "o4"} {
+		t.Run(model, func(t *testing.T) {
+			setTestModel(t)
+			config.Conf.Llm.Model = model
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					MaxTokens           int `json:"max_tokens"`
+					MaxCompletionTokens int `json:"max_completion_tokens"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatalf("decode err: %v", err)
+				}
+				if request.MaxTokens != 0 {
+					t.Errorf("expected max_tokens to be 0 for model %s, got %d", model, request.MaxTokens)
+				}
+				if request.MaxCompletionTokens != 2048 {
+					t.Errorf("expected max_completion_tokens to be 2048 for model %s, got %d", model, request.MaxCompletionTokens)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+			}))
+			defer server.Close()
+			client := newClient(server.URL, "test-key", "", time.Second)
+			text, err := client.ChatCompletionContextWithMaxTokens(context.Background(), "translate", 2048)
+			if err != nil || text != "ok" {
+				t.Fatalf("text=%q err=%v", text, err)
+			}
+		})
+	}
+}
+
+func TestChatCompletionFallsBackOnTokenLimitError(t *testing.T) {
+	setTestModel(t)
+	config.Conf.Llm.Model = "legacy-model"
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		var request struct {
+			MaxTokens           int `json:"max_tokens"`
+			MaxCompletionTokens int `json:"max_completion_tokens"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		if call == 1 {
+			if request.MaxTokens != 2048 {
+				t.Errorf("first call should have max_tokens=2048, got %d", request.MaxTokens)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"this model is not supported MaxTokens, please use MaxCompletionTokens"}}`))
+			return
+		}
+		if request.MaxCompletionTokens != 2048 {
+			t.Errorf("fallback call should have max_completion_tokens=2048, got %d", request.MaxCompletionTokens)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"fallback ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client := newClient(server.URL, "test-key", "", time.Second)
+	text, err := client.ChatCompletionContextWithMaxTokens(context.Background(), "translate", 2048)
+	if err != nil || text != "fallback ok" {
+		t.Fatalf("text=%q err=%v", text, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected 2 calls, got %d", calls.Load())
+	}
+}
+
 func TestChatCompletionRejectsEmptyResponse(t *testing.T) {
 	setTestModel(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

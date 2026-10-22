@@ -1016,6 +1016,68 @@ export const videoGenerationPanelAdapter: CreatorPanelAdapter = {
   }
 };
 
+export const facelessVideoPanelAdapter: CreatorPanelAdapter = {
+  id: 'faceless-video',
+  composerPlaceholder: l => l(
+    '询问状态，或描述要调整的脚本、画面、音频与成片要求',
+    'Ask about status or describe script, visual, audio, and delivery changes'
+  ),
+  stageLabel(stageId, l) {
+    const labels: Record<string, string> = {
+      script: l('生成纪录片文案', 'Generate documentary script'),
+      timeline: l('生成时间线与字幕', 'Generate timeline and subtitles'),
+      render: l('渲染 1080p 视频', 'Render 1080p video')
+    };
+    return labels[stageId] ?? l('Faceless Video 任务', 'Faceless Video task');
+  },
+  phaseLabel(phase, l) {
+    const labels: Record<string, string> = {
+      researching_topic: l('深入调研主题与资料', 'Researching topic & background'),
+      generating_script: l('撰写纪录片解说文案', 'Drafting documentary script'),
+      analyzing_inputs: l('分析输入素材', 'Analyzing inputs'),
+      stitching_chapter_audio: l('拼接章节音频与对齐时间戳', 'Stitching chapter audio & aligning timestamps'),
+      generating_timeline: l('规划镜头时间线', 'Generating shot timeline'),
+      preparing_render: l('准备视频渲染', 'Preparing video render'),
+      rendering_shots: l('渲染镜头动画', 'Rendering shot animations'),
+      concatenating_video: l('拼接成片画面', 'Concatenating video footage'),
+      merging_audio_and_subtitles: l('合成音频与字幕', 'Merging audio and subtitles'),
+      completed: l('成片已完成', 'Video completed')
+    };
+    return labels[phase] ?? phase;
+  },
+  activityStageId: readActivityStageId,
+  normalizeActivity(activity, l) {
+    return normalizeCommonActivity(
+      activity,
+      l,
+      facelessVideoPanelAdapter,
+      {
+        'update-settings': l('更新设置', 'Updated settings'),
+        'run-stage': l('开始任务', 'Started stage')
+      },
+      field => field
+    );
+  },
+  readStageProgress: readStandardProgress,
+  runningProgressText(_stage, progress, l) {
+    if (progress.total !== null && progress.total > 0 && progress.completed !== null && progress.phase === 'rendering_shots') {
+      return l(`正在渲染镜头画面 ${progress.completed}/${progress.total}`, `Rendering shot visuals ${progress.completed}/${progress.total}`);
+    }
+    return progress.phase === null ? null : facelessVideoPanelAdapter.phaseLabel(progress.phase, l);
+  },
+  failedProgressText(stage, l) {
+    if (stage.errorCode === 'creator_ffmpeg_missing') {
+      return l('系统中未找到 FFmpeg，无法渲染视频', 'FFmpeg is missing, cannot render video');
+    }
+    return null;
+  },
+  succeededProgressText(stage, l) {
+    if (stage.stageId === 'timeline') return l('时间线与字幕已生成', 'Timeline and subtitles generated');
+    if (stage.stageId === 'render') return l('成片视频已渲染完成', 'Final video successfully rendered');
+    return null;
+  }
+};
+
 export function creatorPanelAdapterFor(templateId: string): CreatorPanelAdapter {
   if (templateId === 'video-translation') return videoTranslationPanelAdapter;
   if (templateId === 'video-download') return videoDownloadPanelAdapter;
@@ -1027,6 +1089,7 @@ export function creatorPanelAdapterFor(templateId: string): CreatorPanelAdapter 
   if (templateId === 'cover') return coverPanelAdapter;
   if (templateId === 'video-generation') return videoGenerationPanelAdapter;
   if (templateId === 'stickman-video') return stickmanVideoPanelAdapter;
+  if (templateId === 'faceless-video') return facelessVideoPanelAdapter;
   return genericAdapter;
 }
 

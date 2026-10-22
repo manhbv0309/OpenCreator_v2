@@ -21,6 +21,7 @@ import {
   Sparkles,
   UserRound,
   WandSparkles,
+  Film,
   type LucideIcon
 } from 'lucide-react';
 import './dashboard.css';
@@ -33,6 +34,7 @@ import SmartDubbingWorkspace from './SmartDubbingWorkspace.js';
 import XiaohongshuPostWorkspace from './XiaohongshuPostWorkspace.js';
 import WechatArticleWorkspace from './WechatArticleWorkspace.js';
 import StickmanVideoWorkspace from './StickmanVideoWorkspace.js';
+import FacelessVideoWorkspace from './FacelessVideoWorkspace.js';
 import VideoDownloadBatchWorkspace from './VideoDownloadBatchWorkspace.js';
 import VideoTranslationWorkspace from './VideoTranslationWorkspace.js';
 import VideoGenerationWorkspace from './VideoGenerationWorkspace.js';
@@ -153,6 +155,15 @@ const creatorTools: DashboardEntry[] = [
     workspace: 'stickman-video'
   },
   {
+    title: 'Faceless Video',
+    description: '10-15分钟 YouTube 纪录片生成',
+    prompt: '根据我的文案和素材，生成 1080p YouTube Faceless 纪录片成片。',
+    category: '视频创作',
+    icon: Film,
+    badge: 'NEW',
+    workspace: 'faceless-video'
+  },
+  {
     title: '视频切片',
     description: 'AI 识别长视频高光片段',
     prompt: '帮我从这段长视频中识别适合独立传播的高光片段，并生成多个短视频切片。',
@@ -207,6 +218,7 @@ const creatorTools: DashboardEntry[] = [
 const categories = ['推荐', '全部', '视频创作', '视频编辑', '图像创作', '文案创作', '音频处理'] as const;
 type CategoryFilter = typeof categories[number];
 const recommendedTabWorkspaces = new Set<CreatorWorkspace>([
+  'faceless-video',
   'video-download',
   'video-translation',
   'video-generation',
@@ -452,6 +464,15 @@ export default function DashboardPage(props: {
         promptHint={activePromptHint}
         creatorServicesService={props.creatorServicesService}
         creatorService={props.creatorService}
+        onBack={closeWorkspace}
+      />
+    ));
+  }
+
+  if (activeWorkspace === 'faceless-video') {
+    return renderCreatorWorkspace('faceless-video', (
+      <FacelessVideoWorkspace
+        promptHint={activePromptHint}
         onBack={closeWorkspace}
       />
     ));
@@ -1053,6 +1074,8 @@ const englishDashboardLabels: Record<string, string> = {
   生成创意图片与视觉素材: 'Generate images and visual assets',
   封面生成: 'Thumbnail Generator',
   生成视频与内容封面: 'Create thumbnails for videos and content',
+  'Faceless Video': 'Faceless Video',
+  '10-15分钟 YouTube 纪录片生成': '10-15 min YouTube documentary generation',
   视频下载: 'Video Downloader',
   '下载公开视频，或提取 MP3 音频': 'Download public videos or extract MP3 audio'
 };

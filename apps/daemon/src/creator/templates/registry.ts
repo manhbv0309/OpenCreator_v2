@@ -19,6 +19,7 @@ import { createSmartDubbingTemplate } from './smart-dubbing.js';
 import { createXiaohongshuPostTemplate } from './xiaohongshu-post.js';
 import { createShortVideoScriptTemplate } from './short-video-script.js';
 import { createWechatArticleTemplate } from './wechat-article.js';
+import { createFacelessVideoTemplate } from './faceless-video.js';
 import type {
   CreatorTemplateDefinition,
   CreatorTemplateRegistry
@@ -40,7 +41,8 @@ export {
   createLegacyVideoDownloadTemplate,
   createVideoDownloadTemplate,
   createLegacyVideoTranslationTemplate,
-  createVideoTranslationTemplate
+  createVideoTranslationTemplate,
+  createFacelessVideoTemplate
 };
 
 export function createDefaultCreatorTemplateRegistry(): CreatorTemplateRegistry {
@@ -60,7 +62,8 @@ export function createDefaultCreatorTemplateRegistry(): CreatorTemplateRegistry 
     createWechatArticleTemplate(),
     createLegacyAutoClipTemplate(),
     createAutoClipTemplate(),
-    createStickmanVideoTemplate()
+    createStickmanVideoTemplate(),
+    createFacelessVideoTemplate()
   ]);
 }
 

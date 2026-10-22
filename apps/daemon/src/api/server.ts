@@ -69,6 +69,7 @@ import {
 import { createVideoExecutor } from '../creator/video/executor.js';
 import { createClipExecutor } from '../creator/clip/executor.js';
 import { createSmartDubbingExecutor } from '../creator/smart-dubbing/executor.js';
+import { createFacelessVideoExecutor } from '../creator/faceless/executor.js';
 import { createXiaohongshuPostExecutor } from '../creator/xiaohongshu/executor.js';
 import { createShortVideoScriptExecutor } from '../creator/short-video-script/executor.js';
 import { createWechatArticleExecutor } from '../creator/article/executor.js';
@@ -1000,6 +1001,11 @@ export async function buildServer(input: BuildServerInput) {
     creatorExecutors.push(createSmartDubbingExecutor({
       ttsService: krillinTtsService,
       isOfficial: () => gatewayAccount.peekState().source === 'gateway'
+    }));
+    creatorExecutors.push(createFacelessVideoExecutor({
+      ffmpegPath: creatorFfmpegPath,
+      ffprobePath: creatorFfprobePath,
+      configStore: creatorServicesConfigStore
     }));
     creatorExecutors.push(createImageExecutor({
       ledger: creatorProviderRequestLedger,

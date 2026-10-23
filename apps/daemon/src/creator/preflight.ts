@@ -32,6 +32,7 @@ import type { VideoMetadataService } from '../video-metadata/service.js';
 import { gatewayCreatorBinding } from '../gateway/creator-service-source.js';
 import { stickmanShotSpecSchema } from './stickman/contracts.js';
 import { shouldUsePreviousShotReference } from './stickman/image-prompt.js';
+import { resolveTesseractExecutable } from './ocr/video-subtitle-ocr.js';
 
 export type CreatorPreflight = ReturnType<typeof createCreatorPreflight>;
 
@@ -177,7 +178,7 @@ export function createCreatorPreflight(input: {
       // Translation starts a workflow; validate its downstream models before processing the video.
       if (job.templateId === 'video-translation' && ['download', 'subtitle'].includes(stage.id)) {
         modalities.add('text');
-        if (inputState.sourceType !== 'subtitle' && !hasImportedSubtitle({ ...job, state: inputState }) && !canTryPlatformCaptions({ ...job, state: inputState })) modalities.add('transcription');
+        if (needsTranscription({ ...job, state: inputState }) && !canTryPlatformCaptions({ ...job, state: inputState })) modalities.add('transcription');
         if (inputState.dubbing === true) modalities.add('speech');
       }
       for (const modality of modalities) {
@@ -321,7 +322,7 @@ export function createCreatorPreflight(input: {
         }, { label: 'Open local component settings', deepLink: '#/settings?tab=local-components' });
       }
     }
-    if (stage.executor === 'krillinai' && stage.id === 'subtitle' && job.state.sourceType !== 'subtitle' && !hasImportedSubtitle(job) && !canTryPlatformCaptions(job) && ['whisper.cpp', 'whisperkit', 'faster-whisper'].includes(config.transcription.provider)) {
+    if (stage.executor === 'krillinai' && stage.id === 'subtitle' && needsTranscription(job) && !canTryPlatformCaptions(job) && ['whisper.cpp', 'whisperkit', 'faster-whisper'].includes(config.transcription.provider)) {
       const provider = input.readCapabilities().transcription.providers.find(candidate => candidate.provider === config.transcription.provider);
       if (provider?.available !== true) add('blocked', {
         id: 'transcription-capability',
@@ -471,7 +472,25 @@ async function checkProviderConfig(
       else add('ready', { id: 'video-provider', title: 'Video service', message: `${provider} / ${settings.model} is configured.`, executionMode: 'remote' });
     }
   }
-  if (stage.executor === 'krillinai' && stage.id === 'subtitle' && job.state.sourceType !== 'subtitle' && !hasImportedSubtitle(job)) {
+  if (stage.executor === 'krillinai' && stage.id === 'subtitle' && job.state.captionSourceMethod === 'ocr') {
+    const tesseract = resolveTesseractExecutable();
+    if (tesseract === undefined) {
+      add('blocked', {
+        id: 'ocr-engine',
+        title: 'Tesseract OCR unavailable',
+        message: 'Tesseract OCR was not found on your system. Please install Tesseract (e.g. sudo apt install tesseract-ocr) or set OPENCREATOR_TESSERACT_PATH.',
+        executionMode: 'local'
+      }, { label: 'Open local component settings', deepLink: '#/settings?tab=local-components' });
+    } else {
+      add('ready', {
+        id: 'ocr-engine',
+        title: 'Tesseract OCR',
+        message: 'Tesseract OCR is ready.',
+        executionMode: 'local'
+      });
+    }
+  }
+  if (stage.executor === 'krillinai' && stage.id === 'subtitle' && needsTranscription(job)) {
     const choices = job.state.officialModels;
     const selectedModel = choices && typeof choices === 'object' && !Array.isArray(choices) && typeof choices.transcription === 'string' ? choices.transcription : undefined;
     const assessment = assessKrillinTranscription(config, typeof job.state.sourceLanguage === 'string' ? job.state.sourceLanguage : 'en', selectedModel);
@@ -494,7 +513,7 @@ async function checkProviderConfig(
     const provider = capabilities.transcription.providers.find(candidate => candidate.provider === config.transcription.provider);
     if (provider?.available !== true) return;
     if (config.transcription.provider === 'openai' && !config.transcription.openai.apiKey.trim()) {
-      checkOpenAi(config.transcription.openai, 'transcription', 'Speech recognition', '#/settings?tab=ai-services&section=transcription', add);
+      checkOpenAi(config.transcription.openai, 'transcription-config', 'Speech recognition', '#/settings?tab=ai-services&section=transcription', add);
     } else if (config.transcription.provider === 'aliyun' && (!config.transcription.aliyun.speech.accessKeyId.trim() || !config.transcription.aliyun.speech.accessKeySecret.trim() || !config.transcription.aliyun.speech.appKey.trim())) {
       add('blocked', { id: 'transcription-config', title: 'Speech recognition credentials missing', message: 'Complete the Aliyun speech recognition credentials.', executionMode: 'remote' }, { label: 'Open AI service settings', deepLink: '#/settings?tab=ai-services&section=transcription' });
     } else if (config.transcription.provider === 'funasr' && (!config.transcription.funasr.baseUrl.trim() || !config.transcription.funasr.model.trim())) {
@@ -503,6 +522,12 @@ async function checkProviderConfig(
       add('blocked', { id: 'transcription-config', title: 'Speech recognition credentials missing', message: 'Complete the Volcengine App ID and access token.', executionMode: 'remote' }, { label: 'Open AI service settings', deepLink: '#/settings?tab=ai-services&section=transcription' });
     } else add('ready', { id: 'transcription-config', title: 'Speech recognition', message: `${config.transcription.provider} is configured.`, executionMode: provider.kind === 'local' ? 'local' : 'remote' });
   }
+}
+
+function needsTranscription(job: CreatorJob): boolean {
+  return job.state.sourceType !== 'subtitle'
+    && job.state.captionSourceMethod !== 'ocr'
+    && !hasImportedSubtitle(job);
 }
 
 function hasImportedSubtitle(job: CreatorJob): boolean {

@@ -537,6 +537,55 @@ describe('creator preflight', () => {
     expect(result.blocked.map(item => item.id)).not.toContain('input-artifact:reference_image');
     expect(result.ready.map(item => item.id)).toContain('input-file:reference-image');
   });
+
+  it('bypasses speech transcription checks when captionSourceMethod is ocr', async () => {
+    root = await mkdtemp(join(tmpdir(), 'creator-ocr-preflight-'));
+    const config = createDefaultCreatorServicesConfig();
+    config.llm.source = 'custom';
+    config.llm.baseUrl = 'https://example.test/v1';
+    config.llm.apiKey = 'test-translation-key';
+    config.llm.model = 'test-translation-model';
+    config.transcription.provider = 'openai';
+    config.transcription.openai.apiKey = '';
+
+    const job = fakeJob('video-translation', {
+      sourceType: 'file',
+      sourceArtifactId: 'video-file',
+      captionSourceMethod: 'ocr'
+    });
+    const videoPath = join(root, 'input.mp4');
+    await writeFile(videoPath, 'fake-video');
+    job.artifacts = [{
+      id: 'video-file',
+      jobId: job.id,
+      kind: 'source_video',
+      version: 1,
+      status: 'completed',
+      path: videoPath,
+      scopeKey: null,
+      inputFingerprint: null,
+      sha256: null,
+      sourceArtifactIds: [],
+      metadata: {},
+      createdAt: job.createdAt
+    }];
+
+    const preflight = createCreatorPreflight({
+      configStore: { read: async () => config },
+      readCapabilities: () => createKrillinCreatorServicesCapabilities('darwin', 'arm64'),
+      resourceRoot: root,
+      jobsRoot: join(root, 'jobs'),
+      executorIds: ['krillinai'],
+      validateRuntimeAssets: false
+    });
+    const stage = createVideoTranslationTemplate().stages.find(s => s.id === 'subtitle')!;
+    const result = await preflight.check(job, stage);
+
+    // Transcription checks should NOT be triggered
+    expect(result.blocked.map(item => item.id)).not.toContain('transcription-config');
+    expect(result.blocked.map(item => item.id)).not.toContain('transcription');
+    expect(result.warning.map(item => item.id)).not.toContain('transcription-language');
+  });
 });
 
 function fakeJob(templateId: string, state: Record<string, CreatorJson>): CreatorJob {

@@ -220,10 +220,16 @@ export function creatorPreflightFailure(result: CreatorPreflightResponse): {
     'video-provider': 'VIDEO_GENERATION_CONFIG_REQUIRED',
     'reference-image-capability': 'unsupported_capability',
     'transcription-config': 'creator_transcription_config_missing',
+    transcription: 'creator_transcription_config_missing',
+    'transcription-capability': 'unsupported_capability',
     'transcription-language': 'creator_transcription_language_unsupported',
     'transcription-timestamps': 'creator_transcription_timestamps_unavailable',
+    'ocr-engine': 'creator_ocr_engine_missing',
     'input-file': 'creator_stage_input_missing',
-    'managed-directory': 'creator_storage_failed'
+    'managed-directory': 'creator_storage_failed',
+    ffmpeg: 'creator_dependency_prepare_failed',
+    ffprobe: 'creator_dependency_prepare_failed',
+    'krillin-runtime': 'creator_dependency_prepare_failed'
   };
   const id = Object.keys(codes).find(id => result.blocked.some(item => item.id === id));
   const code = id === undefined ? 'creator_preflight_blocked' : codes[id]!;

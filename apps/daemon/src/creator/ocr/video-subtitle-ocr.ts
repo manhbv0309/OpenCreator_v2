@@ -1,14 +1,19 @@
 import { execFile } from 'node:child_process';
+import { availableParallelism } from 'node:os';
 import { promisify } from 'node:util';
 import { mkdir, readdir, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import Tesseract from 'tesseract.js';
 import {
   clusterOcrFrames,
   buildSrtFromCues,
   type ClusteredSubtitleCue,
   type RawOcrFrame
 } from './subtitle-clustering.js';
+import {
+  resolveManagedOcrLanguage,
+  type ManagedOcrLanguage
+} from './component.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -17,12 +22,22 @@ export type OcrRegion = 'bottom_25' | 'bottom_33' | 'full';
 export type VideoSubtitleOcrOptions = {
   videoPath: string;
   ffmpegPath?: string;
-  tesseractPath?: string;
   originLang?: string;
   ocrRegion?: OcrRegion;
   fps?: number;
+  concurrency?: number;
+  signal?: AbortSignal;
+  managedLanguage?: ManagedOcrLanguage;
+  extractFrames?: (framesDir: string) => Promise<string[]>;
+  recognizeFrame?: (path: string) => Promise<string>;
   workdir: string;
-  reportProgress?: (progress: { phase: string; percent: number; message: string }) => void;
+  reportProgress?: (progress: {
+    phase: string;
+    percent: number;
+    message: string;
+    completed?: number;
+    total?: number;
+  }) => void;
 };
 
 export type VideoSubtitleOcrResult = {
@@ -32,30 +47,17 @@ export type VideoSubtitleOcrResult = {
   frameCount: number;
 };
 
-export function resolveTesseractExecutable(explicitPath?: string): string | undefined {
-  if (explicitPath && existsSync(explicitPath)) return explicitPath;
-  const candidates = [
-    process.env.OPENCREATOR_TESSERACT_PATH,
-    process.platform === 'win32' ? 'C:\\Program Files\\Tesseract-OCR\\tesseract.exe' : undefined,
-    process.platform === 'win32' ? 'C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe' : undefined,
-    '/usr/bin/tesseract',
-    '/usr/local/bin/tesseract',
-    '/opt/homebrew/bin/tesseract'
-  ];
-  return candidates.find(candidate => candidate !== undefined && existsSync(candidate));
-}
-
 export function mapLanguageToTesseract(lang?: string): string {
-  if (!lang) return 'eng';
-  const normalized = lang.toLowerCase().replace(/[-_]/g, '');
-  if (normalized.startsWith('zh') || normalized === 'chi') return 'chi_sim+eng';
-  if (normalized.startsWith('vi') || normalized === 'vie') return 'vie+eng';
-  if (normalized.startsWith('ja') || normalized === 'jpn') return 'jpn+eng';
-  if (normalized.startsWith('ko') || normalized === 'kor') return 'kor+eng';
-  if (normalized.startsWith('es') || normalized === 'spa') return 'spa+eng';
-  if (normalized.startsWith('fr') || normalized === 'fra') return 'fra+eng';
-  if (normalized.startsWith('de') || normalized === 'deu') return 'deu+eng';
-  if (normalized.startsWith('ru') || normalized === 'rus') return 'rus+eng';
+  const normalized = lang?.toLowerCase().replaceAll('-', '_') ?? 'en';
+  if (normalized === 'zh_tw' || normalized === 'zh_hk' || normalized === 'zh_hant') return 'chi_tra';
+  if (normalized.startsWith('zh') || normalized === 'chi') return 'chi_sim';
+  if (normalized.startsWith('vi') || normalized === 'vie') return 'vie';
+  if (normalized.startsWith('ja') || normalized === 'jpn') return 'jpn';
+  if (normalized.startsWith('ko') || normalized === 'kor') return 'kor';
+  if (normalized.startsWith('es') || normalized === 'spa') return 'spa';
+  if (normalized.startsWith('fr') || normalized === 'fra') return 'fra';
+  if (normalized.startsWith('de') || normalized === 'deu') return 'deu';
+  if (normalized.startsWith('ru') || normalized === 'rus') return 'rus';
   return 'eng';
 }
 
@@ -82,129 +84,141 @@ export async function extractVideoSubtitleOcr(
     fps = 2,
     reportProgress
   } = options;
-
-  const tesseract = resolveTesseractExecutable(options.tesseractPath);
-  if (!tesseract) {
-    throw new Error(
-      'Tesseract OCR executable not found. Please install Tesseract-OCR on your system or specify OPENCREATOR_TESSERACT_PATH.'
-    );
-  }
-
+  throwIfAborted(options.signal);
   const ffmpeg = options.ffmpegPath ?? 'ffmpeg';
   const framesDir = join(workdir, 'ocr_frames');
   await rm(framesDir, { recursive: true, force: true });
   await mkdir(framesDir, { recursive: true });
+  try {
+    reportProgress?.({ phase: 'extracting_ocr_frames', percent: 10, message: 'Extracting video frames for subtitle OCR' });
+    let frameFiles: string[];
+    if (options.extractFrames) {
+      frameFiles = (await options.extractFrames(framesDir)).filter(file => /^frame_\d+\.jpg$/.test(file)).sort();
+    } else {
+      const crop = buildCropFilter(ocrRegion);
+      const vfFilters: string[] = [`fps=${fps}`];
+      if (crop) vfFilters.push(crop);
+      const framePattern = join(framesDir, 'frame_%05d.jpg');
+      await execFileAsync(ffmpeg, [
+        '-y', '-nostdin', '-i', videoPath,
+        '-vf', vfFilters.join(','), '-q:v', '2', framePattern
+      ], { timeout: 300_000, signal: options.signal });
+      frameFiles = (await readdir(framesDir)).filter(file => /^frame_\d+\.jpg$/.test(file)).sort();
+    }
+    if (frameFiles.length === 0) return { srtContent: '', cues: [], cueCount: 0, frameCount: 0 };
 
-  reportProgress?.({
-    phase: 'extracting_ocr_frames',
-    percent: 10,
-    message: 'Extracting video frames for subtitle OCR'
-  });
+    reportProgress?.({
+      phase: 'recognizing_video_text', percent: 30,
+      message: `Running OCR on ${frameFiles.length} video frames`, completed: 0, total: frameFiles.length
+    });
+    const rawFrames = await recognizeFrames({ ...options, frameFiles, framesDir, reportProgress });
+    throwIfAborted(options.signal);
+    reportProgress?.({
+      phase: 'merging_ocr_subtitles', percent: 90,
+      message: 'Clustering OCR frames and formatting subtitles', completed: frameFiles.length, total: frameFiles.length
+    });
+    const cues = clusterOcrFrames(rawFrames, {
+      frameIntervalSec: 1 / fps,
+      minDurationMs: 400,
+      similarityThreshold: 0.75
+    });
+    return { srtContent: buildSrtFromCues(cues), cues, cueCount: cues.length, frameCount: frameFiles.length };
+  } finally {
+    await rm(framesDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
 
-  const crop = buildCropFilter(ocrRegion);
-  const vfFilters: string[] = [`fps=${fps}`];
-  if (crop) vfFilters.push(crop);
-
-  const framePattern = join(framesDir, 'frame_%05d.jpg');
-  await execFileAsync(ffmpeg, [
-    '-y',
-    '-i', videoPath,
-    '-vf', vfFilters.join(','),
-    '-q:v', '2',
-    framePattern
-  ], { timeout: 300_000 });
-
-  const frameFiles = (await readdir(framesDir))
-    .filter(file => /^frame_\d+\.jpg$/.test(file))
-    .sort();
-
-  if (frameFiles.length === 0) {
-    return {
-      srtContent: '',
-      cues: [],
-      cueCount: 0,
-      frameCount: 0
-    };
+async function recognizeFrames(input: VideoSubtitleOcrOptions & {
+  frameFiles: string[];
+  framesDir: string;
+}): Promise<RawOcrFrame[]> {
+  const frameIntervalSec = 1 / (input.fps ?? 2);
+  const output: Array<RawOcrFrame | undefined> = new Array(input.frameFiles.length);
+  let completed = 0;
+  if (input.recognizeFrame) {
+    await runPool(input.frameFiles.length, input.concurrency ?? 2, input.signal, async index => {
+      const text = (await input.recognizeFrame!(join(input.framesDir, input.frameFiles[index]!))).trim();
+      if (text) output[index] = frameResult(input.frameFiles[index]!, index, frameIntervalSec, text);
+      completed += 1;
+      reportRecognitionProgress(input, completed);
+    });
+    return output.filter((frame): frame is RawOcrFrame => frame !== undefined);
   }
 
-  reportProgress?.({
+  const language = input.managedLanguage ?? await resolveManagedOcrLanguage(input.originLang);
+  const workerCount = Math.max(1, Math.min(
+    input.concurrency ?? Math.min(2, availableParallelism()),
+    input.frameFiles.length
+  ));
+  const workers = await Promise.all(Array.from({ length: workerCount }, async () => {
+    throwIfAborted(input.signal);
+    const worker = await Tesseract.createWorker(language.code, Tesseract.OEM.LSTM_ONLY, {
+      langPath: language.langPath,
+      gzip: true,
+      cacheMethod: 'none'
+    });
+    await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
+    return worker;
+  }));
+  let next = 0;
+  const abort = () => { void Promise.allSettled(workers.map(worker => worker.terminate())); };
+  input.signal?.addEventListener('abort', abort, { once: true });
+  try {
+    await Promise.all(workers.map(async worker => {
+      while (true) {
+        throwIfAborted(input.signal);
+        const index = next++;
+        if (index >= input.frameFiles.length) return;
+        const result = await worker.recognize(join(input.framesDir, input.frameFiles[index]!));
+        const text = result.data.text.trim();
+        if (text) output[index] = frameResult(input.frameFiles[index]!, index, frameIntervalSec, text);
+        completed += 1;
+        reportRecognitionProgress(input, completed);
+      }
+    }));
+  } finally {
+    input.signal?.removeEventListener('abort', abort);
+    await Promise.allSettled(workers.map(worker => worker.terminate()));
+  }
+  return output.filter((frame): frame is RawOcrFrame => frame !== undefined);
+}
+
+function frameResult(file: string, fallbackIndex: number, interval: number, text: string): RawOcrFrame {
+  const match = /frame_(\d+)\.jpg$/.exec(file);
+  const index = match ? Number(match[1]) - 1 : fallbackIndex;
+  return { timeSec: index * interval, text };
+}
+
+function reportRecognitionProgress(
+  input: Pick<VideoSubtitleOcrOptions, 'reportProgress'> & { frameFiles: string[] },
+  completed: number
+) {
+  input.reportProgress?.({
     phase: 'recognizing_video_text',
-    percent: 30,
-    message: `Running OCR on ${frameFiles.length} video frames`
+    percent: 30 + Math.round((completed / input.frameFiles.length) * 55),
+    message: `Recognizing text in video (${completed}/${input.frameFiles.length})`,
+    completed,
+    total: input.frameFiles.length
   });
+}
 
-  const tessLang = mapLanguageToTesseract(originLang);
-  const rawFrames: RawOcrFrame[] = [];
-  const frameIntervalSec = 1 / fps;
-
-  for (let i = 0; i < frameFiles.length; i++) {
-    const frameFile = frameFiles[i]!;
-    const framePath = join(framesDir, frameFile);
-    const frameIndexMatch = /frame_(\d+)\.jpg$/.exec(frameFile);
-    const frameIndex = frameIndexMatch ? Number(frameIndexMatch[1]) - 1 : i;
-    const timeSec = frameIndex * frameIntervalSec;
-
-    try {
-      const { stdout } = await execFileAsync(tesseract, [
-        framePath,
-        'stdout',
-        '-l', tessLang,
-        '--psm', '6'
-      ], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
-
-      const text = stdout.trim();
-      if (text) {
-        rawFrames.push({ timeSec, text });
-      }
-    } catch {
-      // If language specific model fails, try fallback to eng
-      if (tessLang !== 'eng') {
-        try {
-          const { stdout } = await execFileAsync(tesseract, [
-            framePath,
-            'stdout',
-            '-l', 'eng',
-            '--psm', '6'
-          ], { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
-          const text = stdout.trim();
-          if (text) rawFrames.push({ timeSec, text });
-        } catch {
-          // Skip frame on failure
-        }
-      }
+async function runPool(
+  count: number,
+  concurrency: number,
+  signal: AbortSignal | undefined,
+  run: (index: number) => Promise<void>
+): Promise<void> {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, count)) }, async () => {
+    while (true) {
+      throwIfAborted(signal);
+      const index = next++;
+      if (index >= count) return;
+      await run(index);
     }
+  }));
+}
 
-    if (i % 20 === 0 && reportProgress) {
-      const currentPercent = 30 + Math.round((i / frameFiles.length) * 55);
-      reportProgress({
-        phase: 'recognizing_video_text',
-        percent: currentPercent,
-        message: `Recognizing text in video (${i + 1}/${frameFiles.length})`
-      });
-    }
-  }
-
-  reportProgress?.({
-    phase: 'merging_ocr_subtitles',
-    percent: 90,
-    message: 'Clustering OCR frames and formatting subtitles'
-  });
-
-  const cues = clusterOcrFrames(rawFrames, {
-    frameIntervalSec,
-    minDurationMs: 400,
-    similarityThreshold: 0.75
-  });
-
-  const srtContent = buildSrtFromCues(cues);
-
-  // Clean up frames directory after OCR
-  await rm(framesDir, { recursive: true, force: true }).catch(() => {});
-
-  return {
-    srtContent,
-    cues,
-    cueCount: cues.length,
-    frameCount: frameFiles.length
-  };
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw Object.assign(new Error('Creator stage was canceled'), { code: 'creator_stage_canceled' });
 }

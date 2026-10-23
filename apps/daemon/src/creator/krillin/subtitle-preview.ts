@@ -34,7 +34,9 @@ export function createSubtitlePreviewService(input: {
             ? [request.translationText, request.originalText]
             : [request.originalText, request.translationText]
           : [request.translationText];
-        await writeFile(stylePath, JSON.stringify(buildKrillinSubtitleStyle(request.subtitleStyle)));
+        await writeFile(stylePath, JSON.stringify(buildKrillinSubtitleStyle(request.subtitleStyle, {
+          ocrSubtitlePosition: request.ocrSubtitlePosition
+        })));
         await writeFile(subtitlePath, `1\n00:00:00,000 --> 00:00:01,000\n${lines.join('\n')}\n\n`);
         const bin = join(input.resourceRoot, 'bin');
         const ytDlp = input.getYtDlpRuntime?.();

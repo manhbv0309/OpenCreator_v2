@@ -11,6 +11,7 @@ import {
 } from '../../src/creator/krillin/cli-runner.js';
 import { createKrillinConfigToml } from '../../src/creator/krillin/config-bridge.js';
 import { buildKrillinStageOptions, normalizeKrillinFailure } from '../../src/creator/krillin/adapter.js';
+import { createKrillinCliExecutionPlan } from '../../src/creator/krillin/execution-plan.js';
 
 describe('KrillinAI CLI protocol', () => {
   it('translates a standalone SRT without passing an old video or translated import', () => {
@@ -33,6 +34,11 @@ describe('KrillinAI CLI protocol', () => {
   it.each(['audio_no_speech', 'audio_transcription_empty', 'audio_transcription_invalid_response', 'audio_transcription_timestamps_missing', 'audio_transcription_api_failed'])('preserves %s through usage-error normalization', code => {
     const message = 'OpenAI transcription response was classified by the runtime';
     expect(normalizeKrillinFailure({ code, kind: 'usage', message })).toEqual({ code, message });
+  });
+  it('classifies an exhausted Codex translation account even when Krillin reports a generic subtitle failure', () => {
+    const message = "字幕1-82: translation failed: Codex LLM completion ended with status failed: You've hit your usage limit.";
+    expect(normalizeKrillinFailure({ code: 'subtitle_import_failed', kind: 'provider', message }))
+      .toEqual({ code: 'creator_llm_quota_exceeded', message });
   });
   it.each(['top', 'bottom'])('passes semantic subtitle ordering to the render command with translation on %s', subtitlePosition => {
     const stage = { job: { templateId: 'video-translation', state: { bilingual: true, subtitlePosition } }, stageRun: { stageId: 'render-horizontal', id: 'render' }, workdir: '/job/render' };
@@ -62,10 +68,42 @@ describe('KrillinAI CLI protocol', () => {
     expect(args[args.indexOf('--line-mode') + 1]).toBe('bilingual-target-bottom');
     expect(args.includes('--target-only')).toBe(!bilingual);
   });
-  it.each([true, false])('never prepares video in the translation subtitle stage, even when composeVideo=%s', composeVideo => {
+  it.each([true, false])('does not prepare video for audio transcription, even when composeVideo=%s', composeVideo => {
     const stage = { job: { templateId: 'video-translation', state: { sourceUrl: 'https://youtu.be/demo', sourceLanguage: 'en', targetLanguage: 'zh_cn', composeVideo } }, stageRun: { stageId: 'subtitle', id: 'stage' }, workdir: '/job/stage' };
     const options = buildKrillinStageOptions(stage as never);
     expect(buildKrillinCliCommandArguments(stage as never, [], options, undefined)).not.toContain('--prepare-video');
+  });
+
+  it('uses local OCR media, imports OCR SRT, and renders target-only below the burned-in subtitle', () => {
+    const state = {
+      sourceType: 'url', sourceUrl: 'https://youtu.be/demo', sourceLanguage: 'vi', targetLanguage: 'en',
+      captionSourceMethod: 'ocr', ocrSubtitlePosition: 'below_original', bilingual: true, composeVideo: true
+    };
+    const subtitleStage = { job: { templateId: 'video-translation', state }, stageRun: { stageId: 'subtitle', id: 'subtitle' }, workdir: '/job/subtitle' };
+    const artifacts = [
+      { id: 'video', kind: 'source_video', path: '/job/source.mp4' },
+      { id: 'ocr', kind: 'source_subtitle', path: '/job/ocr.srt' }
+    ];
+    const options = buildKrillinStageOptions(subtitleStage as never);
+    expect(options).toMatchObject({ captionSource: 'ocr', prepareVideo: true, bilingual: false });
+    const plan = createKrillinCliExecutionPlan('subtitle', {
+      sourceUrl: state.sourceUrl,
+      mediaSource: 'local:/job/source.mp4'
+    }, options);
+    expect(plan[0]?.source).toBe('local:/job/source.mp4');
+    const subtitleArgs = buildKrillinCliCommandArguments(subtitleStage as never, artifacts, options, undefined, plan[0]?.source);
+    expect(subtitleArgs).toContain('--prepare-video');
+    expect(subtitleArgs.slice(subtitleArgs.indexOf('--input-srt'), subtitleArgs.indexOf('--input-srt') + 2)).toEqual(['--input-srt', '/job/ocr.srt']);
+
+    const renderStage = { ...subtitleStage, stageRun: { stageId: 'render-horizontal', id: 'render' } };
+    const renderArgs = buildKrillinCliCommandArguments(renderStage as never, [
+      artifacts[0]!,
+      { id: 'target', kind: 'target_subtitle', path: '/job/target.srt' },
+      { id: 'bilingual', kind: 'bilingual_subtitle', path: '/job/bilingual.srt' }
+    ], buildKrillinStageOptions(renderStage as never), '/job/style.json');
+    expect(renderArgs.slice(renderArgs.indexOf('--subtitle'), renderArgs.indexOf('--subtitle') + 2)).toEqual(['--subtitle', '/job/target.srt']);
+    expect(renderArgs.slice(renderArgs.indexOf('--line-mode'), renderArgs.indexOf('--line-mode') + 2)).toEqual(['--line-mode', 'target-only']);
+    expect((buildKrillinStageOptions(renderStage as never).subtitleStyle as { horizontal: { major: { margin_v: number } } }).horizontal.major.margin_v).toBe(10);
   });
 
   it('generates audio-only dubbing without a video, and lazily composes that audio later', () => {

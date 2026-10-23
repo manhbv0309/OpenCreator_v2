@@ -92,7 +92,9 @@ function localizedIssueSummary(issue: OpenCreatorIssue, localize: LocalizeCopy):
   if (issue.code === 'creator_template_version_mismatch') return localize('项目模板版本不匹配，请刷新页面后重试。', 'The project template version does not match. Refresh the page and retry.', 'Projektets mallversion stämmer inte. Uppdatera sidan och försök igen.');
   if (issue.code === 'creator_upload_failed') return localize('上传未完成，请重试。', 'The upload did not complete. Please retry.', 'Uppladdningen slutfördes inte. Försök igen.');
   if (issue.code === 'image_generation_failed') return localize('图片生成失败。', 'Image generation failed.', 'Bildgenereringen misslyckades.');
-  if (issue.code === 'creator_ocr_engine_missing') return localize('Tesseract OCR 未安装或无法执行。', 'Tesseract OCR is not installed or unavailable.', 'Tesseract OCR är inte installerat eller otillgängligt.');
+  if (issue.code === 'creator_ocr_engine_missing') return localize('Tesseract OCR 组件缺失或校验失败。', 'The managed Tesseract OCR component is missing or failed verification.', 'Tesseract OCR-komponenten saknas eller kunde inte verifieras.');
+  if (issue.code === 'creator_ocr_language_unsupported') return localize('OCR 暂不支持所选源语言。', 'OCR does not support the selected source language.');
+  if (issue.code === 'creator_ocr_no_text') return localize('未在所选画面区域识别到字幕。', 'No subtitles were detected in the selected video region.');
   const entry = catalog[issue.summaryKey] ?? catalog[`issue.${issue.category}`] ?? catalog['issue.unknown']!;
   return localize(entry.zh, entry.en);
 }
@@ -220,7 +222,11 @@ export function issueConversationText(
     : issue.code === 'creator_template_version_mismatch'
     ? localize('请刷新页面以加载当前模板版本；如果仍然失败，请重新启动本地服务。', 'Refresh the page to load the current template version. If the problem persists, restart the local service.', 'Uppdatera sidan för att läsa in den aktuella mallversionen. Om problemet kvarstår, starta om den lokala tjänsten.')
     : issue.code === 'creator_ocr_engine_missing'
-    ? localize('请在系统安装 Tesseract OCR（如 sudo apt install tesseract-ocr tesseract-ocr-vie）或指定 OPENCREATOR_TESSERACT_PATH 后重试。', 'Install Tesseract OCR on your system (e.g. sudo apt install tesseract-ocr tesseract-ocr-vie) or specify OPENCREATOR_TESSERACT_PATH, then retry.', 'Installera Tesseract OCR på systemet eller ange OPENCREATOR_TESSERACT_PATH och försök igen.')
+    ? localize('请前往本地组件页面检查 Tesseract OCR 和语言包后重试。', 'Open Local Components, verify Tesseract OCR and its language packs, then retry.', 'Öppna Lokala komponenter, verifiera Tesseract OCR och språkpaketen och försök igen.')
+    : issue.code === 'creator_ocr_language_unsupported'
+    ? localize('请选择 OCR 支持的源语言，或改用语音转录。', 'Choose an OCR-supported source language or switch to speech transcription.')
+    : issue.code === 'creator_ocr_no_text'
+    ? localize('请扩大 OCR 识别区域或确认视频中存在清晰、固定位置的字幕后重试。', 'Expand the OCR region or confirm that the video contains clear, consistently positioned subtitles, then retry.')
     : issue.publicFacts?.kind === 'http-rejected' || issue.publicFacts?.kind === 'provider-failed'
       ? localize('请根据服务返回的原因调整输入或请求参数后重试；仍有疑问时，可提供请求编号向服务方查询。', 'Review the provider reason and adjust the input or request parameters before retrying. Use the request ID to ask the provider for details if needed.', 'Läs leverantörens felorsak och justera indata eller parametrarna innan du försöker igen. Använd begärans-ID för att fråga leverantören vid behov.')
     : issue.publicFacts?.kind === 'unauthorized'

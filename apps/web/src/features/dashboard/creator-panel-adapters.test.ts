@@ -5,6 +5,7 @@ import {
   videoTranslationPanelAdapter,
   videoGenerationPanelAdapter,
   creatorPanelAdapterFor,
+  creatorSystemIssueText,
   stickmanVideoPanelAdapter,
   type CreatorPanelLocalize
 } from './creator-panel-adapters.js';
@@ -13,6 +14,10 @@ const zh: CreatorPanelLocalize = value => value;
 const en: CreatorPanelLocalize = (_zh, value) => value;
 
 describe('Remotion preparation progress', () => {
+  it('gives an actionable explanation when text-model quota is exhausted', () => {
+    expect(creatorSystemIssueText('creator_llm_quota_exceeded', en)).toContain('quota is exhausted');
+  });
+
   it('uses the shared stickman adapter without exposing transcription or internal dependency fields', () => {
     const running = { ...stage('render', 'render-clean', 'running', null, 'render-clean'), stageId: 'render-clean', progress: { phase: 'preparing_dependencies', percent: 3, message: 'internal', dependencyItem: 'private archive' } };
     const progress = stickmanVideoPanelAdapter.readStageProgress(running, en);

@@ -29,6 +29,9 @@ export function createKrillinCliExecutionPlan(
 
   const captionSource = stringOption(options, 'captionSource') ?? 'any';
   const mediaSource = sources.mediaSource ?? sources.sourceUrl;
+  if (captionSource === 'ocr') {
+    return [{ ...(mediaSource === undefined ? {} : { source: mediaSource }), options }];
+  }
   if (!isYouTubeSource(sources.sourceUrl) || captionSource === 'whisper') {
     return [{ ...(mediaSource === undefined ? {} : { source: mediaSource }), options }];
   }

@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const preflightKrillinDependencies = vi.hoisted(() => vi.fn());
 const runKrillinCli = vi.hoisted(() => vi.fn());
+const extractVideoSubtitleOcr = vi.hoisted(() => vi.fn());
+const resolveManagedOcrLanguage = vi.hoisted(() => vi.fn());
+const prepareVideoTranslationOcrSource = vi.hoisted(() => vi.fn());
 
 vi.mock('../../src/creator/krillin/dependency-preflight.js', () => ({
   preflightKrillinDependencies
@@ -21,6 +24,10 @@ vi.mock('../../src/creator/krillin/cli-runner.js', async importOriginal => {
   return { ...actual, runKrillinCli };
 });
 
+vi.mock('../../src/creator/ocr/video-subtitle-ocr.js', () => ({ extractVideoSubtitleOcr }));
+vi.mock('../../src/creator/ocr/component.js', () => ({ resolveManagedOcrLanguage }));
+vi.mock('../../src/creator/download/executor.js', () => ({ prepareVideoTranslationOcrSource }));
+
 import { createKrillinExecutor } from '../../src/creator/krillin/adapter.js';
 import { KrillinCliError } from '../../src/creator/krillin/cli-runner.js';
 
@@ -33,6 +40,59 @@ afterEach(() => {
 });
 
 describe('KrillinAI configured transcription dependency', () => {
+  it('downloads an uncached URL before OCR and passes the generated SRT without preparing transcription', async () => {
+    const fixture = setup();
+    const stage = fixture.stage as CreatorExecutorInput;
+    stage.job.templateId = 'video-translation';
+    stage.job.state = {
+      ...stage.job.state,
+      sourceType: 'url', sourceLanguage: 'en', captionSourceMethod: 'ocr'
+    };
+    stage.inputArtifacts = [];
+    const sourcePath = join(tempDir, 'downloaded-source.mp4');
+    writeFileSync(sourcePath, 'video');
+    fixture.getYtDlpRuntime.mockReturnValue({
+      version: 'test', executable: '/runtime/yt-dlp', prefixArgs: [], env: {}
+    } as never);
+    prepareVideoTranslationOcrSource.mockResolvedValue({
+      kind: 'source_video', status: 'completed', path: sourcePath,
+      metadata: { source: 'video-translation-ocr', previewOnly: false }
+    });
+    resolveManagedOcrLanguage.mockResolvedValue({ code: 'eng', langPath: '/runtime/eng', dataPath: '/runtime/eng/eng.traineddata.gz' });
+    extractVideoSubtitleOcr.mockResolvedValue({
+      srtContent: '1\n00:00:00,000 --> 00:00:01,000\nBurned subtitle\n',
+      cues: [{ index: 1, start: '00:00:00,000', end: '00:00:01,000', text: 'Burned subtitle' }],
+      cueCount: 1, frameCount: 2
+    });
+    runKrillinCli.mockImplementation(async input => {
+      const subtitle = writeTargetSubtitle(input.jobsRoot);
+      return ['source_subtitle', 'target_subtitle', 'vertical_subtitle', 'bilingual_subtitle'].map(kind => ({ ...subtitle, kind }));
+    });
+
+    const result = await fixture.executor.run(stage);
+
+    expect(prepareVideoTranslationOcrSource).toHaveBeenCalledOnce();
+    expect(extractVideoSubtitleOcr).toHaveBeenCalledWith(expect.objectContaining({
+      videoPath: sourcePath, originLang: 'en', signal: stage.signal
+    }));
+    expect(fixture.ensure).not.toHaveBeenCalled();
+    expect(runKrillinCli).toHaveBeenCalledWith(expect.objectContaining({
+      source: expect.stringMatching(/^local:/),
+      options: expect.objectContaining({ captionSource: 'ocr', bilingual: false }),
+      artifacts: expect.arrayContaining([
+        expect.objectContaining({ kind: 'source_video', path: sourcePath }),
+        expect.objectContaining({ kind: 'source_subtitle', path: expect.stringMatching(/ocr_source\.srt$/) })
+      ])
+    }));
+    expect(result.outputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'source_video', path: sourcePath }),
+      expect.objectContaining({ kind: 'source_subtitle' }),
+      expect.objectContaining({ kind: 'target_subtitle' }),
+      expect.objectContaining({ kind: 'vertical_subtitle' }),
+      expect.objectContaining({ kind: 'bilingual_subtitle' })
+    ]));
+  });
+
   it.each(['platform-success', 'platform-failure', 'audio', 'import'])('checks language only at the actual ASR boundary: %s', async route => {
     const fixture = setup();
     fixture.config.transcription.provider = 'whisperkit';
@@ -283,19 +343,19 @@ function setup() {
   const resourceRoot = join(tempDir, 'runtime');
   const jobsRoot = join(tempDir, 'jobs');
   const sourcePath = join(jobsRoot, 'auto-clip-job', 'inputs', 'source.mp4');
+  const ffmpegPath = join(resourceRoot, 'bin', 'ffmpeg');
   const ffprobePath = join(resourceRoot, 'bin', 'ffprobe');
   mkdirSync(join(resourceRoot, 'bin'), { recursive: true });
   mkdirSync(join(jobsRoot, 'auto-clip-job', 'inputs'), { recursive: true });
   writeFileSync(sourcePath, 'video');
+  writeFileSync(ffmpegPath, 'ffmpeg');
   writeFileSync(ffprobePath, 'ffprobe');
   writeFileSync(join(resourceRoot, 'manifest.json'), JSON.stringify({
     version: 1,
     platform: process.platform,
     arch: process.arch,
-    resources: [{
-      path: 'bin/ffprobe',
-      sha256: 'a'.repeat(64),
-      kind: 'executable'
+    resources: [{ path: 'bin/ffprobe', sha256: 'a'.repeat(64), kind: 'executable' }, {
+      path: 'bin/ffmpeg', sha256: 'b'.repeat(64), kind: 'executable'
     }]
   }));
 

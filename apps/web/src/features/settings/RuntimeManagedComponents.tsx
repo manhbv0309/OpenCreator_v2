@@ -8,7 +8,7 @@ import { OriginalErrorDetails } from '../issues/OriginalErrorDetails.js';
 import { localComponentPreparationMessage } from './local-component-copy.js';
 import './local-transcription.css';
 
-const componentLogos: Record<CreatorRuntimeComponent['id'], string> = {
+const componentLogos: Partial<Record<CreatorRuntimeComponent['id'], string>> = {
   whisperkit: '/components/whisperkit.png',
   'whisper.cpp': '/components/whisper-cpp.png',
   'faster-whisper': '/components/faster-whisper.png',
@@ -64,6 +64,7 @@ export function RuntimeManagedComponents({ controller, componentId, onReturn }: 
     {!status && !controller.componentError && controller.refreshComponents ? <p role="status">{localize('正在检查第三方组件', 'Checking third-party components', 'Kontrollerar tredjepartskomponenter')}</p> : null}
     {status?.components.filter(component => component.available || component.id === 'remotion').map(component => {
       const rendering = component.id === 'remotion';
+      const ocr = component.id === 'tesseract';
       const selected = component.id === status.selectedProvider;
       const busy = ['downloading', 'verifying', 'extracting'].includes(component.state);
       const checking = action?.componentId === component.id && action.kind === 'check';
@@ -74,8 +75,8 @@ export function RuntimeManagedComponents({ controller, componentId, onReturn }: 
       const statusKind = component.state === 'failed' ? 'failed' : busy ? 'checking' : updateAvailable ? 'update' : current ? 'current' : 'checking';
       const updateLabel = localize(`更新到 ${component.supportedVersion}`, `Update to ${component.supportedVersion}`, `Uppdatera till ${component.supportedVersion}`);
       const requiredResources = [
-        component.version === null || updateAvailable ? rendering ? localize('渲染引擎、浏览器和模板资源', 'rendering engine, browser, and template resources', 'renderingsmotor, webbläsare och mallresurser') : localize('转录引擎', 'transcription engine') : undefined,
-        !rendering && component.models.find(model => model.id === component.model)?.installed !== true
+        component.version === null || updateAvailable ? rendering ? localize('渲染引擎、浏览器和模板资源', 'rendering engine, browser, and template resources', 'renderingsmotor, webbläsare och mallresurser') : ocr ? localize('OCR 引擎与语言包', 'OCR engine and language packs') : localize('转录引擎', 'transcription engine') : undefined,
+        !rendering && !ocr && component.models.find(model => model.id === component.model)?.installed !== true
           ? `${component.model ?? ''} ${localize('模型', 'model')}`.trim() : undefined
       ].filter(Boolean).join(localize('、', ', '));
       const labels = {
@@ -87,13 +88,13 @@ export function RuntimeManagedComponents({ controller, componentId, onReturn }: 
         <div className="runtime-component-heading">
           <div>
             <div className="runtime-component-title">
-              <h2 className="runtime-component-name"><img className="runtime-component-logo" src={componentLogos[component.id]} width="26" height="26" alt="" />{component.name}</h2>
+              <h2 className="runtime-component-name">{componentLogos[component.id] ? <img className="runtime-component-logo" src={componentLogos[component.id]} width="26" height="26" alt="" /> : null}{component.name}</h2>
               <span role="status" data-status={statusKind}>
                 {statusKind === 'failed' ? <AlertCircle size={13} aria-hidden="true" /> : statusKind === 'current' ? <CheckCircle2 size={13} aria-hidden="true" /> : statusKind === 'update' ? <Download size={13} aria-hidden="true" /> : busy ? <LoaderCircle className="settings-spin" size={13} aria-hidden="true" /> : null}
                 {statusKind === 'update' ? localize('有可用更新', 'Update available', 'Uppdatering tillgänglig') : labels[component.state]}</span>
               {selected ? <span>{localize('当前使用', 'Selected')}</span> : null}
             </div>
-            <p>{rendering ? localize('用于火柴人动画本地渲染。', 'Local rendering for stickman animations.', 'Lokal rendering av streckgubbsanimationer.') : localize('用于本地语音转录，仅在实际需要转录时使用。', 'Used for local speech transcription only when transcription is needed.')}</p>
+            <p>{rendering ? localize('用于火柴人动画本地渲染。', 'Local rendering for stickman animations.', 'Lokal rendering av streckgubbsanimationer.') : ocr ? localize('用于识别视频画面中已有的字幕。', 'Recognizes burned-in subtitles in video frames.') : localize('用于本地语音转录，仅在实际需要转录时使用。', 'Used for local speech transcription only when transcription is needed.')}</p>
           </div>
         </div>
         <dl className="runtime-component-details">
@@ -111,7 +112,7 @@ export function RuntimeManagedComponents({ controller, componentId, onReturn }: 
               {startingDownload ? localize('正在准备', 'Preparing') : component.state === 'failed' ? localize('重试下载', 'Retry download') : updateAvailable ? updateLabel : component.state === 'partial' ? localize('补齐组件', 'Complete installation') : localize('下载组件', 'Download components')}
             </button> : null}
           </div>
-          {!selected && !rendering ? <a href="#/settings?tab=ai-services&section=transcription">{localize('调整转录设置', 'Change transcription settings')}</a> : null}
+          {!selected && !rendering && !ocr ? <a href="#/settings?tab=ai-services&section=transcription">{localize('调整转录设置', 'Change transcription settings')}</a> : null}
         </footer> : null}
         <details className="local-component-details">
           <summary><ChevronDown size={15} aria-hidden="true" />{localize('组件详情', 'Component details')}</summary>
@@ -125,7 +126,7 @@ export function RuntimeManagedComponents({ controller, componentId, onReturn }: 
             <div><dt>{localize('安装位置', 'Install location')}</dt><dd>{component.path}</dd></div>
             <div><dt>{localize('资源来源与校验', 'Source and verification')}</dt><dd>{component.source}</dd></div>
             <div><dt>{localize('安装时间', 'Installed at')}</dt><dd>{component.installedAt ? new Date(component.installedAt).toLocaleString(language) : '—'}</dd></div>
-            {!rendering ? <div><dt>{localize('模型列表', 'Models')}</dt><dd><ul className="local-component-models">{component.models.map(model => <li key={model.id}>{model.id} · {model.installed ? localize('已安装并通过检查', 'Installed and checked') : localize('未安装', 'Not installed')}{model.bytes === null ? '' : ` · ${(model.bytes / 1024 ** 3).toFixed(2)} GiB`}</li>)}</ul></dd></div> : null}
+            {!rendering ? <div><dt>{ocr ? localize('语言包', 'Language packs') : localize('模型列表', 'Models')}</dt><dd><ul className="local-component-models">{component.models.map(model => <li key={model.id}>{model.id} · {model.installed ? localize('已安装并通过检查', 'Installed and checked') : localize('未安装', 'Not installed')}{model.bytes === null ? '' : ` · ${(model.bytes / 1024 ** 2).toFixed(1)} MiB`}</li>)}</ul></dd></div> : null}
           </dl>
         </details>
         {busy ? <div className="local-component-progress" role="status">

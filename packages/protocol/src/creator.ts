@@ -386,7 +386,7 @@ export type CreatorYtDlpStatusResponse = {
 };
 
 export type CreatorRuntimeComponent = {
-  id: 'whisperkit' | 'whisper.cpp' | 'faster-whisper' | 'remotion';
+  id: 'whisperkit' | 'whisper.cpp' | 'faster-whisper' | 'remotion' | 'tesseract';
   name: string;
   available: boolean;
   version: string | null;
@@ -408,7 +408,7 @@ export type CreatorRuntimeComponent = {
 };
 
 export type CreatorLocalComponent = Omit<CreatorRuntimeComponent, 'id'> & {
-  id: Exclude<CreatorRuntimeComponent['id'], 'remotion'>;
+  id: Exclude<CreatorRuntimeComponent['id'], 'remotion' | 'tesseract'>;
 };
 
 export type CreatorRuntimeComponentsResponse = {
@@ -773,6 +773,7 @@ export type CreatorSubtitlePreviewRequest = {
   subtitleStyle: Record<string, CreatorJson>;
   bilingual: boolean;
   subtitlePosition: 'top' | 'bottom';
+  ocrSubtitlePosition?: 'below_original' | 'above_original';
   translationText: string;
   originalText: string;
 };

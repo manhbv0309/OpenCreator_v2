@@ -653,6 +653,37 @@ describe('VideoTranslationWorkspace task controls', () => {
     expect(within(workspace).queryByRole('tab', { name: '配音' })).not.toBeInTheDocument();
   });
 
+  it('persists OCR recognition settings and hides controls that would duplicate burned-in subtitles', async () => {
+    let current = job({ status: 'draft', revision: 0, stages: [], state: {
+      currentStep: 1, furthestStep: 1, captionSourceMethod: 'auto', ocrSubtitlePosition: 'mask_replace'
+    } });
+    const applyAction = vi.fn(async (_id: string, request: { input: { patch?: Record<string, CreatorJson> } }) => {
+      current = { ...current, revision: current.revision + 1, state: { ...current.state, ...request.input.patch } };
+      return { job: current };
+    });
+    render(<LanguageProvider initialPreference="zh-CN"><CreatorSessionProvider initialJob={current}
+      service={{ applyAction, runAgentTurn: vi.fn() } as never}>
+      <VideoTranslationWorkspace onBack={vi.fn()} />
+    </CreatorSessionProvider></LanguageProvider>);
+
+    const workspace = screen.getByRole('region', { name: '视频翻译操作区' });
+    expect(within(workspace).getByRole('button', { name: '语音转录' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(workspace).queryByRole('button', { name: '遮罩替换' })).not.toBeInTheDocument();
+
+    fireEvent.click(within(workspace).getByRole('button', { name: '画面OCR' }));
+    expect(within(workspace).getByRole('button', { name: '在原字幕下方' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(workspace).getByRole('combobox', { name: 'OCR 识别区域' })).toHaveValue('bottom_25');
+    expect(within(workspace).queryByRole('switch', { name: '双语字幕' })).not.toBeInTheDocument();
+    expect(within(workspace).queryByRole('switch', { name: '优先使用平台字幕' })).not.toBeInTheDocument();
+    expect(within(workspace).getByText('OCR 模式会保留画面中已有的原字幕，只在成片中加入译文；双语 SRT 仍可下载。')).toBeVisible();
+
+    fireEvent.change(within(workspace).getByRole('combobox', { name: 'OCR 识别区域' }), { target: { value: 'bottom_33' } });
+    fireEvent.click(within(workspace).getByRole('button', { name: '在原字幕上方' }));
+    await waitFor(() => expect(current.state).toMatchObject({
+      captionSourceMethod: 'ocr', ocrRegion: 'bottom_33', ocrSubtitlePosition: 'above_original'
+    }));
+  });
+
   it('restores subtitle-only results with source text, downloads and no video player', () => {
     const source = { ...subtitleArtifact(1, 'Hello'), id: 'source-srt', kind: 'source_subtitle', metadata: { ...subtitleArtifact(1, 'Hello').metadata, fileName: 'source.srt', source: 'local-upload' } };
     const target = subtitleArtifact(1, '你好');

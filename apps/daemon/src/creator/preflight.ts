@@ -32,7 +32,7 @@ import type { VideoMetadataService } from '../video-metadata/service.js';
 import { gatewayCreatorBinding } from '../gateway/creator-service-source.js';
 import { stickmanShotSpecSchema } from './stickman/contracts.js';
 import { shouldUsePreviousShotReference } from './stickman/image-prompt.js';
-import { resolveTesseractExecutable } from './ocr/video-subtitle-ocr.js';
+import type { OcrComponentManager } from './ocr/component.js';
 
 export type CreatorPreflight = ReturnType<typeof createCreatorPreflight>;
 
@@ -61,6 +61,7 @@ export function createCreatorPreflight(input: {
   ffprobePath?: string;
   stickmanRuntimeRoot?: string;
   remotionComponent?: Pick<RemotionComponentManager, 'status'>;
+  ocrComponent?: Pick<OcrComponentManager, 'ensure'>;
   getYtDlpRuntime?(): YtDlpRuntime | undefined;
   runtimeVerificationCachePath?: string;
   ensureRuntimeReady?(): Promise<void>;
@@ -150,7 +151,7 @@ export function createCreatorPreflight(input: {
       inputSnapshot?.artifactRefs,
       inputSnapshot?.state
     );
-    await checkProviderConfig({ ...job, state: inputState }, stage, config, resolvedInputs.artifacts, input.readCapabilities(), add, input.readCodexImageStatus);
+    await checkProviderConfig({ ...job, state: inputState }, stage, config, resolvedInputs.artifacts, input.readCapabilities(), add, input.readCodexImageStatus, input.ocrComponent);
     if (job.templateId === 'image-generation' && stage.id === 'generate'
       && typeof inputState.prompt === 'string' && imagePromptRequiresReference(inputState.prompt)
       && !resolvedInputs.artifacts.some(artifact => artifact.kind === 'reference_image'
@@ -354,7 +355,8 @@ async function checkProviderConfig(
   inputArtifacts: CreatorArtifact[],
   capabilities: CreatorServicesCapabilitiesResponse,
   add: (status: 'ready' | 'warning' | 'blocked', item: Omit<CreatorPreflightCheck, 'executionMode'> & { executionMode?: CreatorPreflightExecutionMode }, repair?: CreatorPreflightCheck['repair']) => void,
-  readCodexImageStatus?: () => Promise<CodexImageStatus>
+  readCodexImageStatus?: () => Promise<CodexImageStatus>,
+  ocrComponent?: Pick<OcrComponentManager, 'ensure'>
 ): Promise<void> {
   const needs = new Set<string>();
   if (stage.executor === 'krillinai') {
@@ -473,21 +475,25 @@ async function checkProviderConfig(
     }
   }
   if (stage.executor === 'krillinai' && stage.id === 'subtitle' && job.state.captionSourceMethod === 'ocr') {
-    const tesseract = resolveTesseractExecutable();
-    if (tesseract === undefined) {
-      add('blocked', {
-        id: 'ocr-engine',
-        title: 'Tesseract OCR unavailable',
-        message: 'Tesseract OCR was not found on your system. Please install Tesseract (e.g. sudo apt install tesseract-ocr) or set OPENCREATOR_TESSERACT_PATH.',
-        executionMode: 'local'
-      }, { label: 'Open local component settings', deepLink: '#/settings?tab=local-components' });
-    } else {
+    try {
+      if (ocrComponent === undefined) throw new Error('OCR component manager is unavailable');
+      const language = await ocrComponent.ensure(typeof job.state.sourceLanguage === 'string' ? job.state.sourceLanguage : undefined);
       add('ready', {
         id: 'ocr-engine',
         title: 'Tesseract OCR',
-        message: 'Tesseract OCR is ready.',
+        message: `Tesseract OCR language model ${language.code} is ready.`,
         executionMode: 'local'
       });
+    } catch (error) {
+      const unsupportedLanguage = (error as { code?: unknown })?.code === 'creator_ocr_language_unsupported';
+      add('blocked', {
+        id: unsupportedLanguage ? 'ocr-language' : 'ocr-engine',
+        title: unsupportedLanguage ? 'OCR language unsupported' : 'Tesseract OCR unavailable',
+        message: error instanceof Error ? error.message : 'The managed OCR component is unavailable.',
+        executionMode: 'local'
+      }, unsupportedLanguage
+        ? { label: 'Choose another source language', deepLink: `#/workbench?tool=${encodeURIComponent(job.templateId)}&jobId=${encodeURIComponent(job.id)}` }
+        : { label: 'Open local component settings', deepLink: '#/settings?tab=local-components&component=tesseract' });
     }
   }
   if (stage.executor === 'krillinai' && stage.id === 'subtitle' && needsTranscription(job)) {

@@ -96,8 +96,8 @@ type TranslationSettingsSnapshot = {
   bilingual: boolean;
   subtitlePosition: SubtitlePosition;
   preferPlatformCaptions: boolean;
-  captionSourceMethod?: 'audio' | 'ocr' | 'auto';
-  ocrSubtitlePosition?: 'below_original' | 'above_original' | 'mask_replace';
+  captionSourceMethod?: 'audio' | 'ocr';
+  ocrSubtitlePosition?: 'below_original' | 'above_original';
   ocrRegion?: 'bottom_25' | 'bottom_33' | 'full';
   subtitleFont: SubtitleFont;
   subtitleWeight: SubtitleWeight;
@@ -646,12 +646,8 @@ function deserializeResultVersions(value: CreatorJson | undefined): TranslationR
         bilingual: settingsRecord.bilingual,
         subtitlePosition: settingsRecord.subtitlePosition,
         preferPlatformCaptions: settingsRecord.preferPlatformCaptions,
-        captionSourceMethod: settingsRecord.captionSourceMethod === 'ocr' || settingsRecord.captionSourceMethod === 'auto'
-          ? settingsRecord.captionSourceMethod
-          : 'audio',
-        ocrSubtitlePosition: settingsRecord.ocrSubtitlePosition === 'above_original' || settingsRecord.ocrSubtitlePosition === 'mask_replace'
-          ? settingsRecord.ocrSubtitlePosition
-          : 'below_original',
+        captionSourceMethod: settingsRecord.captionSourceMethod === 'ocr' ? 'ocr' : 'audio',
+        ocrSubtitlePosition: settingsRecord.ocrSubtitlePosition === 'above_original' ? 'above_original' : 'below_original',
         ocrRegion: settingsRecord.ocrRegion === 'bottom_33' || settingsRecord.ocrRegion === 'full'
           ? settingsRecord.ocrRegion
           : 'bottom_25',
@@ -919,14 +915,10 @@ function legacyResultVersionsFromArtifacts(
             : persisted?.settings.preferPlatformCaptions ?? true,
           captionSourceMethod: sourceState.captionSourceMethod === 'ocr'
             ? 'ocr'
-            : sourceState.captionSourceMethod === 'auto'
-              ? 'auto'
-              : persisted?.settings.captionSourceMethod ?? 'audio',
+            : persisted?.settings.captionSourceMethod ?? 'audio',
           ocrSubtitlePosition: sourceState.ocrSubtitlePosition === 'above_original'
             ? 'above_original'
-            : sourceState.ocrSubtitlePosition === 'mask_replace'
-              ? 'mask_replace'
-              : persisted?.settings.ocrSubtitlePosition ?? 'below_original',
+            : persisted?.settings.ocrSubtitlePosition ?? 'below_original',
           ocrRegion: sourceState.ocrRegion === 'bottom_33'
             ? 'bottom_33'
             : sourceState.ocrRegion === 'full'
@@ -1054,14 +1046,10 @@ function resultVersionFromSnapshot(
       ),
       captionSourceMethod: (sourceState.captionSourceMethod === 'ocr'
         ? 'ocr'
-        : sourceState.captionSourceMethod === 'auto'
-          ? 'auto'
-          : persisted?.settings.captionSourceMethod ?? 'audio'),
+        : persisted?.settings.captionSourceMethod ?? 'audio'),
       ocrSubtitlePosition: (sourceState.ocrSubtitlePosition === 'above_original'
         ? 'above_original'
-        : sourceState.ocrSubtitlePosition === 'mask_replace'
-          ? 'mask_replace'
-          : persisted?.settings.ocrSubtitlePosition ?? 'below_original'),
+        : persisted?.settings.ocrSubtitlePosition ?? 'below_original'),
       ocrRegion: (sourceState.ocrRegion === 'bottom_33'
         ? 'bottom_33'
         : sourceState.ocrRegion === 'full'
@@ -1810,8 +1798,8 @@ export default function VideoTranslationWorkspace(props: {
   const [bilingual, setBilingual] = useState(true);
   const [subtitlePosition, setSubtitlePosition] = useState<SubtitlePosition>('top');
   const [preferPlatformCaptions, setPreferPlatformCaptions] = useState(true);
-  const [captionSourceMethod, setCaptionSourceMethod] = useState<'audio' | 'ocr' | 'auto'>('audio');
-  const [ocrSubtitlePosition, setOcrSubtitlePosition] = useState<'below_original' | 'above_original' | 'mask_replace'>('below_original');
+  const [captionSourceMethod, setCaptionSourceMethod] = useState<'audio' | 'ocr'>('audio');
+  const [ocrSubtitlePosition, setOcrSubtitlePosition] = useState<'below_original' | 'above_original'>('below_original');
   const [ocrRegion, setOcrRegion] = useState<'bottom_25' | 'bottom_33' | 'full'>('bottom_25');
   const [subtitleFont, setSubtitleFont] = useState<SubtitleFont>(defaultSubtitleStyle.subtitleFont);
   const [subtitleWeight, setSubtitleWeight] = useState<SubtitleWeight>(defaultSubtitleStyle.subtitleWeight);
@@ -2035,12 +2023,10 @@ export default function VideoTranslationWorkspace(props: {
     if (typeof persisted.bilingual === 'boolean') setBilingual(persisted.bilingual);
     if (persisted.subtitlePosition === 'top' || persisted.subtitlePosition === 'bottom') setSubtitlePosition(persisted.subtitlePosition);
     if (typeof persisted.preferPlatformCaptions === 'boolean') setPreferPlatformCaptions(persisted.preferPlatformCaptions);
-    if (persisted.captionSourceMethod === 'audio' || persisted.captionSourceMethod === 'ocr' || persisted.captionSourceMethod === 'auto') {
-      setCaptionSourceMethod(persisted.captionSourceMethod);
-    }
-    if (persisted.ocrSubtitlePosition === 'below_original' || persisted.ocrSubtitlePosition === 'above_original' || persisted.ocrSubtitlePosition === 'mask_replace') {
-      setOcrSubtitlePosition(persisted.ocrSubtitlePosition);
-    }
+    if (persisted.captionSourceMethod === 'audio' || persisted.captionSourceMethod === 'ocr') setCaptionSourceMethod(persisted.captionSourceMethod);
+    else if (persisted.captionSourceMethod === 'auto') setCaptionSourceMethod('audio');
+    if (persisted.ocrSubtitlePosition === 'below_original' || persisted.ocrSubtitlePosition === 'above_original') setOcrSubtitlePosition(persisted.ocrSubtitlePosition);
+    else if (persisted.ocrSubtitlePosition === 'mask_replace') setOcrSubtitlePosition('below_original');
     if (persisted.ocrRegion === 'bottom_25' || persisted.ocrRegion === 'bottom_33' || persisted.ocrRegion === 'full') {
       setOcrRegion(persisted.ocrRegion);
     }
@@ -2538,13 +2524,16 @@ export default function VideoTranslationWorkspace(props: {
       ?? l('等待上传视频', 'Waiting for an upload'));
   const outputLabel = outputLabelFor({ composeVideo, videoFormat }, l);
   const subtitleStyleLabel = `${subtitleFontLabel(subtitleFont, l)} · ${subtitleWeightLabel(subtitleWeight, l)} · ${subtitleSizeLabel(subtitleSize, l)} · ${subtitleColor.toUpperCase()}`;
+  const embeddedBilingual = captionSourceMethod !== 'ocr' && bilingual;
   const summaryItems = useMemo(() => [
     { label: l('翻译语言', 'Languages'), value: `${languageLabel(sourceLanguages, sourceLanguage)} → ${languageLabel(targetLanguages, targetLanguage)}` },
-    { label: l('字幕', 'Subtitles'), value: bilingual ? l(`双语 · 译文在${subtitlePosition === 'top' ? '上' : '下'}`, `Bilingual · translation ${subtitlePosition === 'top' ? 'above' : 'below'}`) : l('仅译文', 'Translation only') },
+    { label: l('字幕', 'Subtitles'), value: captionSourceMethod === 'ocr'
+      ? l(`OCR · 译文在原字幕${ocrSubtitlePosition === 'above_original' ? '上方' : '下方'}`, `OCR · translation ${ocrSubtitlePosition === 'above_original' ? 'above' : 'below'} original`)
+      : bilingual ? l(`双语 · 译文在${subtitlePosition === 'top' ? '上' : '下'}`, `Bilingual · translation ${subtitlePosition === 'top' ? 'above' : 'below'}`) : l('仅译文', 'Translation only') },
     ...(composeVideo ? [{ label: l('字幕样式', 'Subtitle style'), value: subtitleStyleLabel }] : []),
     ...(composeVideo ? [{ label: l('配音', 'Dubbing'), value: dubbing ? (voiceName.trim() || voiceCode.trim() || l('自动匹配音色', 'Auto-match voice')) : l('关闭', 'Off') }] : []),
     { label: l('输出', 'Output'), value: outputLabel }
-  ], [bilingual, composeVideo, dubbing, l, outputLabel, sourceLanguage, subtitlePosition, subtitleStyleLabel, targetLanguage, voiceCode, voiceName]);
+  ], [bilingual, captionSourceMethod, composeVideo, dubbing, l, ocrSubtitlePosition, outputLabel, sourceLanguage, subtitlePosition, subtitleStyleLabel, targetLanguage, voiceCode, voiceName]);
   const targetLanguageLabel = languageLabel(targetLanguages, targetLanguage);
   const selectedResult = resultVersions.find(version => version.value === resultVersion);
   const selectedSubtitleOnly = (selectedResult?.source.sourceType ?? sourceType) === 'subtitle';
@@ -3567,8 +3556,9 @@ export default function VideoTranslationWorkspace(props: {
           input={{
             width: Math.max(32, Math.round(960 * previewWidth / Math.max(previewWidth, previewHeight))),
             height: Math.max(32, Math.round(960 * previewHeight / Math.max(previewWidth, previewHeight))),
-            bilingual,
+            bilingual: embeddedBilingual,
             subtitlePosition,
+            ...(captionSourceMethod === 'ocr' ? { ocrSubtitlePosition } : {}),
             translationText: l('这是一段译文字幕', 'This is a translated subtitle'),
             originalText: l('这是一段原文字幕', 'This is an original subtitle'),
             subtitleStyle: subtitleRenderStyle
@@ -3638,7 +3628,7 @@ export default function VideoTranslationWorkspace(props: {
           onChange={setSubtitleColor}
         />
 
-        {bilingual ? <SubtitleColorControl
+        {embeddedBilingual ? <SubtitleColorControl
           label={l('原文颜色', 'Original color')}
           value={subtitleSecondaryColor}
           onChange={setSubtitleSecondaryColor}
@@ -3688,15 +3678,16 @@ export default function VideoTranslationWorkspace(props: {
 
   const subtitleLayoutControls = (
     <>
-      <Switch
+      {captionSourceMethod === 'ocr' ? <p role="status">{l(
+        'OCR 模式会保留画面中已有的原字幕，只在成片中加入译文；双语 SRT 仍可下载。',
+        'OCR keeps the burned-in original subtitle and adds only the translation to the rendered video. A bilingual SRT is still available.'
+      )}</p> : <Switch
         checked={bilingual}
         label={l('双语字幕', 'Bilingual subtitles')}
         description={l('同时保留原文和译文', 'Keep both the original and translated text')}
-        onChange={value => {
-          setBilingual(value);
-        }}
-      />
-      {bilingual ? (
+        onChange={setBilingual}
+      />}
+      {captionSourceMethod !== 'ocr' && bilingual ? (
         <div className="video-translation-inline-setting">
           <span>{l('译文位置', 'Translation position')}</span>
           <div role="group" aria-label={l('译文位置', 'Translation position')}>
@@ -3715,9 +3706,9 @@ export default function VideoTranslationWorkspace(props: {
         <span className="video-translation-language-arrow" aria-hidden="true">→</span>
         <LanguageSelect label={l('翻译为', 'Translate to')} value={targetLanguage} onChange={setTargetLanguage} l={l} />
       </div>
-      {!subtitleOnly && transcriptionLanguageSupport(sourceLanguage, asrCapability) === 'unsupported' ? <p role="status">{l('当前识别服务不支持该源语言。请更换识别服务或导入原文字幕；优先使用平台字幕时仅影响转录回退。', 'The speech service does not support this source language. Change services or import source subtitles; with platform captions this only affects audio fallback.')}</p> : null}
+      {!subtitleOnly && captionSourceMethod === 'audio' && transcriptionLanguageSupport(sourceLanguage, asrCapability) === 'unsupported' ? <p role="status">{l('当前识别服务不支持该源语言。请更换识别服务或导入原文字幕；优先使用平台字幕时仅影响转录回退。', 'The speech service does not support this source language. Change services or import source subtitles; with platform captions this only affects audio fallback.')}</p> : null}
       {importedSourceSubtitle && sourceLanguage === 'auto' ? <p role="status">{l('未能可靠识别字幕语言，请手动选择源语言。', 'The subtitle language could not be reliably detected. Select the source language.')}</p> : null}
-      {!subtitleOnly && asrCapability && transcriptionLanguageSupport(sourceLanguage, asrCapability) === 'unknown' ? <p role="status">{l('当前识别服务的语言范围尚未确认，请确认服务支持所选语言。', 'Language coverage is unverified. Confirm that the speech service supports this language.')}</p> : null}
+      {!subtitleOnly && captionSourceMethod === 'audio' && asrCapability && transcriptionLanguageSupport(sourceLanguage, asrCapability) === 'unknown' ? <p role="status">{l('当前识别服务的语言范围尚未确认，请确认服务支持所选语言。', 'Language coverage is unverified. Confirm that the speech service supports this language.')}</p> : null}
     </>
   );
   const subtitleImportControl = !subtitleOnly ? <VideoTranslationSubtitleImport
@@ -3745,6 +3736,7 @@ export default function VideoTranslationWorkspace(props: {
         </div>
       </div>
       {captionSourceMethod === 'ocr' ? (
+        <>
         <div className="video-translation-inline-setting">
           <span>{l('译文相对原字幕位置', 'Translation position vs burned-in sub')}</span>
           <div role="group" aria-label={l('译文相对原字幕位置', 'Translation position vs burned-in sub')}>
@@ -3762,19 +3754,24 @@ export default function VideoTranslationWorkspace(props: {
             >
               {l('在原字幕上方', 'Above original')}
             </button>
-            <button
-              type="button"
-              aria-pressed={ocrSubtitlePosition === 'mask_replace'}
-              onClick={() => setOcrSubtitlePosition('mask_replace')}
-            >
-              {l('遮挡替换', 'Mask & replace')}
-            </button>
           </div>
         </div>
+        <label className="video-translation-field">
+          <span>{l('OCR 识别区域', 'OCR recognition region')}</span>
+          <div className="video-translation-select-wrap">
+            <select aria-label={l('OCR 识别区域', 'OCR recognition region')} value={ocrRegion} onChange={event => setOcrRegion(event.target.value as typeof ocrRegion)}>
+              <option value="bottom_25">{l('底部 25%', 'Bottom 25%')}</option>
+              <option value="bottom_33">{l('底部 33%', 'Bottom 33%')}</option>
+              <option value="full">{l('整个画面', 'Full frame')}</option>
+            </select>
+            <ChevronDown size={15} strokeWidth={1.8} aria-hidden="true" />
+          </div>
+        </label>
+        </>
       ) : null}
     </div>
   ) : null;
-  const platformCaptionsControl = !subtitleOnly ? <Switch
+  const platformCaptionsControl = !subtitleOnly && captionSourceMethod === 'audio' ? <Switch
     checked={preferPlatformCaptions && sourceType === 'url'}
     label={l('优先使用平台字幕', 'Prefer platform subtitles')}
     description={sourceType === 'url' ? l('平台无字幕时自动识别', 'Transcribe automatically when platform subtitles are unavailable') : l('仅视频链接可用', 'Available for video links only')}
@@ -3898,7 +3895,7 @@ export default function VideoTranslationWorkspace(props: {
               className="video-translation-subtitle-preset"
               onClick={() => selectSubtitleStyle(preset.style)}
             >
-              <SubtitlePresetThumbnail style={preset.style} bilingual={bilingual} translationOnTop={subtitlePosition === 'top'} posterUrl={previewPosterUrl} />
+              <SubtitlePresetThumbnail style={preset.style} bilingual={embeddedBilingual} translationOnTop={subtitlePosition === 'top'} posterUrl={previewPosterUrl} />
               <span>{l(...preset.name)}</span>
             </button>
           )) : null}
@@ -3911,7 +3908,7 @@ export default function VideoTranslationWorkspace(props: {
                 className="video-translation-subtitle-preset"
                 onClick={() => selectSubtitleStyle(saved.style)}
               >
-                <SubtitlePresetThumbnail style={saved.style} bilingual={bilingual} translationOnTop={subtitlePosition === 'top'} posterUrl={previewPosterUrl} />
+                <SubtitlePresetThumbnail style={saved.style} bilingual={embeddedBilingual} translationOnTop={subtitlePosition === 'top'} posterUrl={previewPosterUrl} />
                 <span>{saved.name}</span>
               </button>
               <div className="video-translation-subtitle-preset-actions">
@@ -4109,8 +4106,9 @@ export default function VideoTranslationWorkspace(props: {
                 input={{
                   width: Math.max(32, Math.round(960 * width / Math.max(width, height))),
                   height: Math.max(32, Math.round(960 * height / Math.max(width, height))),
-                  bilingual,
+                  bilingual: embeddedBilingual,
                   subtitlePosition,
+                  ...(captionSourceMethod === 'ocr' ? { ocrSubtitlePosition } : {}),
                   // The preview renderer accepts one plain-text line per language.
                   translationText: cues.map(cue => cue.text).join(' ').replace(/[{}\\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 128) || ' ',
                   originalText: cues.map(cue => cue.sourceText ?? '').join(' ').replace(/[{}\\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 128) || ' ',
@@ -4568,6 +4566,9 @@ function creatorErrorMessage(cause: unknown, l: LocalizeCopy): string {
   if (code === 'creator_llm_config_missing') {
     return l('开始翻译前需要配置文本翻译模型 API。', 'Configure the text translation model API before starting.');
   }
+  if (code === 'creator_llm_quota_exceeded') {
+    return l('文本翻译模型额度已用尽。请等待额度恢复，或在设置中切换到有可用额度的模型后重试。', 'The text translation model has reached its usage limit. Wait for the quota to reset, or switch to a model with available quota in Settings and retry.');
+  }
   if (code === 'creator_transcription_language_unsupported') return l('当前识别模型不支持所选源语言，请更换识别服务或导入原文字幕', 'This model does not support the source language. Change the speech service or import source subtitles');
   if (code === 'creator_transcription_timestamps_unavailable') return l('请选择提供字幕时间戳的识别服务', 'Choose a speech service that provides subtitle timestamps');
   if (code === 'creator_transcription_config_missing') {
@@ -4657,9 +4658,14 @@ function stageErrorMessage(code: string | null, message: string | null, l: Local
 function normalizeStageConfigurationError(code: string | null | undefined, message: string | null | undefined): string | null {
   if (
     code === 'creator_llm_config_missing'
+    || code === 'creator_llm_quota_exceeded'
     || code === 'creator_transcription_config_missing'
     || code === 'creator_tts_config_missing'
   ) return code;
+  if (typeof message === 'string' && (
+    /(?:codex\s+llm|\bllm\b|大模型|文本翻译).*(?:usage.?limit|quota|credits?|rate.?limit|limit.?exceeded)/i.test(message)
+    || /(?:usage.?limit|quota|credits?|rate.?limit|limit.?exceeded).*(?:codex\s+llm|\bllm\b|大模型|文本翻译)/i.test(message)
+  )) return 'creator_llm_quota_exceeded';
   if (code === 'usage' && typeof message === 'string') {
     if (/OpenAI.*(?:转录|transcri)|(?:转录|transcri).*OpenAI/i.test(message)) return 'creator_transcription_config_missing';
     if (/(?:TTS|配音|语音合成)/i.test(message)) return 'creator_tts_config_missing';
@@ -4671,6 +4677,7 @@ function normalizeStageConfigurationError(code: string | null | undefined, messa
 function needsCreatorServicesConfiguration(...codes: Array<string | null | undefined>): boolean {
   return codes.some(code => (
     code === 'creator_llm_config_missing'
+    || code === 'creator_llm_quota_exceeded'
     || ['creator_transcription_config_missing', 'creator_transcription_language_unsupported', 'creator_transcription_timestamps_unavailable'].includes(code ?? '')
     || code === 'creator_tts_config_missing'
   ));

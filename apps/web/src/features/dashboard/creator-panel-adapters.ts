@@ -1435,6 +1435,10 @@ export function creatorSystemIssueText(
       '请先配置文本模型',
       'Configure the text model to continue'
     ),
+    creator_llm_quota_exceeded: l(
+      '文本模型额度已用尽，请等待恢复或更换模型',
+      'The text model quota is exhausted. Wait or switch models.'
+    ),
     creator_transcription_config_missing: l(
       '请先配置语音转录服务',
       'Configure speech transcription to continue'

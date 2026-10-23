@@ -43,6 +43,7 @@ import { createCreatorStageScheduler } from '../creator/stage-scheduler.js';
 import { createCreatorCommandDispatcher } from '../creator/command-dispatcher.js';
 import type { CreatorExecutor } from '../creator/executor.js';
 import { createKrillinExecutor } from '../creator/krillin/adapter.js';
+import { createOcrComponentManager } from '../creator/ocr/component.js';
 import { createKrillinDependencyLoader } from '../creator/krillin/dependency-loader.js';
 import { readKrillinRuntimeManifest, resolveInside } from '../creator/krillin/manifest.js';
 import {
@@ -807,6 +808,7 @@ export async function buildServer(input: BuildServerInput) {
     developmentArchiveRoot: !existsSync(packagedRemotionReleasePath) && process.env.OPENCREATOR_RUNTIME_CHANNEL === 'development' ? dirname(remotionReleasePath) : undefined,
     readProxy: async () => (await creatorServicesConfigStore.read()).proxy.trim()
   });
+  const ocrComponent = createOcrComponentManager();
   const packagedStickmanAssetsRoot = process.env.OPENCREATOR_STICKMAN_ASSETS_ROOT
     ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../runtime/stickman-assets');
   const packagedStickmanCatalog = join(packagedStickmanAssetsRoot, 'visual-assets', 'catalog.json');
@@ -1051,6 +1053,7 @@ export async function buildServer(input: BuildServerInput) {
     ffprobePath: creatorFfprobePath,
     stickmanRuntimeRoot,
     remotionComponent,
+    ocrComponent,
     ...(getYtDlpRuntime === undefined ? {} : { getYtDlpRuntime }),
     runtimeVerificationCachePath: krillinVerificationCachePath,
     ensureRuntimeReady: () => ensureKrillinRuntimeReady(),
@@ -1613,6 +1616,7 @@ export async function buildServer(input: BuildServerInput) {
   await registerCreatorRuntimeRoutes(server, creatorYtDlpUpdateManager, {
     loader: krillinDependencyLoader,
     remotion: remotionComponent,
+    ocr: ocrComponent,
     readConfig: () => creatorServicesConfigStore.read()
   });
   await registerImageGenerationRoutes(server, imageGenerationService);

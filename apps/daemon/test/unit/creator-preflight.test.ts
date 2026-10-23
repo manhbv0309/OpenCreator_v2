@@ -21,6 +21,65 @@ afterEach(async () => {
 });
 
 describe('creator preflight', () => {
+  it('uses managed OCR language data without requiring speech transcription', async () => {
+    root = await mkdtemp(join(tmpdir(), 'creator-ocr-preflight-'));
+    const config = createDefaultCreatorServicesConfig();
+    config.llm.source = 'custom';
+    config.llm.baseUrl = 'https://example.test/v1';
+    config.llm.apiKey = 'translation-key';
+    config.llm.model = 'translation-model';
+    config.transcription.provider = 'openai';
+    config.transcription.openai.apiKey = '';
+    const ensure = vi.fn(async () => ({ code: 'vie' as const, langPath: '/runtime/vie', dataPath: '/runtime/vie/vie.traineddata.gz' }));
+    const ocrJob = fakeJob('video-translation', {
+      sourceType: 'file', sourceArtifactId: 'video', sourceLanguage: 'vi', targetLanguage: 'en',
+      captionSourceMethod: 'ocr'
+    });
+    ocrJob.artifacts.push({
+      id: 'video', jobId: ocrJob.id, kind: 'source_video', version: 1, status: 'completed',
+      path: join(root, 'source.mp4'), scopeKey: null, inputFingerprint: null, sha256: null,
+      sourceArtifactIds: [], metadata: {}, createdAt: ocrJob.createdAt
+    });
+    await writeFile(join(root, 'source.mp4'), 'fixture');
+    const result = await createCreatorPreflight({
+      configStore: { read: async () => config },
+      readCapabilities: () => createKrillinCreatorServicesCapabilities('linux', 'x64'),
+      resourceRoot: root,
+      jobsRoot: join(root, 'jobs'),
+      executorIds: ['krillinai'],
+      validateRuntimeAssets: false,
+      ocrComponent: { ensure }
+    }).check(ocrJob, createVideoTranslationTemplate().stages.find(stage => stage.id === 'subtitle')!);
+    expect(ensure).toHaveBeenCalledWith('vi');
+    expect(result.ready).toContainEqual(expect.objectContaining({ id: 'ocr-engine' }));
+    expect([...result.ready, ...result.warning, ...result.blocked].some(item => item.id.startsWith('transcription-'))).toBe(false);
+    expect(result.blocked).toEqual([]);
+    expect(result.canStart).toBe(true);
+  });
+
+  it('blocks unsupported managed OCR languages with a language-specific repair', async () => {
+    root = await mkdtemp(join(tmpdir(), 'creator-ocr-language-preflight-'));
+    const config = createDefaultCreatorServicesConfig();
+    config.llm.source = 'custom';
+    config.llm.baseUrl = 'https://example.test/v1';
+    config.llm.apiKey = 'translation-key';
+    config.llm.model = 'translation-model';
+    const result = await createCreatorPreflight({
+      configStore: { read: async () => config },
+      readCapabilities: () => createKrillinCreatorServicesCapabilities('linux', 'x64'),
+      resourceRoot: root,
+      jobsRoot: join(root, 'jobs'),
+      executorIds: ['krillinai'],
+      validateRuntimeAssets: false,
+      ocrComponent: { ensure: async () => { throw Object.assign(new Error('OCR does not support Italian'), { code: 'creator_ocr_language_unsupported' }); } }
+    }).check(fakeJob('video-translation', {
+      sourceType: 'file', sourceArtifactId: 'video', sourceLanguage: 'it', targetLanguage: 'en',
+      captionSourceMethod: 'ocr'
+    }), createVideoTranslationTemplate().stages.find(stage => stage.id === 'subtitle')!);
+    expect(result.blocked).toContainEqual(expect.objectContaining({ id: 'ocr-language' }));
+    expect(result.canStart).toBe(false);
+  });
+
   it.each(['timestamped', 'text-only'])('checks subtitle timestamps for the task-selected official ASR: %s', async selected => {
     root = await mkdtemp(join(tmpdir(), 'creator-asr-model-preflight-'));
     const config = createDefaultCreatorServicesConfig();

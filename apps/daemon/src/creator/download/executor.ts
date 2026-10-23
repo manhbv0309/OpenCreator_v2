@@ -13,6 +13,7 @@ import { creatorResultSnapshotForVersion } from '../result-snapshots.js';
 import type {
   CreatorExecutor,
   CreatorExecutorInput,
+  CreatorExecutorOutput,
   CreatorExecutorResult
 } from '../executor.js';
 import type { CreatorServicesConfigStore } from '../../creator-services/config-store.js';
@@ -25,7 +26,7 @@ import { withYtDlpProxy } from '../yt-dlp/args.js';
 import type { YtDlpRuntime } from '../yt-dlp/runtime.js';
 import { parseDownloadProbe } from './probe-parser.js';
 
-type DownloadExecutorOptions = {
+export type DownloadExecutorOptions = {
   configStore: Pick<CreatorServicesConfigStore, 'read'>;
   ytDlpPath: string;
   ytDlpPrefixArgs?: string[];
@@ -36,6 +37,34 @@ type DownloadExecutorOptions = {
   ffprobePath: string;
   ffprobePrefixArgs?: string[];
 };
+
+export async function prepareVideoTranslationOcrSource(
+  input: DownloadExecutorOptions,
+  stage: CreatorExecutorInput
+): Promise<CreatorExecutorOutput> {
+  const sourceUrl = readSourceUrl(stage);
+  const previewStage: CreatorExecutorInput = {
+    ...stage,
+    stageRun: {
+      ...stage.stageRun,
+      stageId: 'preview-source-video',
+      progress: { ...stage.stageRun.progress, previewSourceUrl: sourceUrl }
+    }
+  };
+  const result = await preparePreviewSource(input, previewStage);
+  const output = result.outputs.find(candidate => candidate.kind === 'source_video');
+  if (output === undefined || output.path === null) {
+    throw new CreatorExecutorError('download_output_missing', 'OCR source video download did not produce a video');
+  }
+  return {
+    ...output,
+    metadata: {
+      ...(output.metadata ?? {}),
+      previewOnly: false,
+      source: 'video-translation-ocr'
+    }
+  };
+}
 
 type PlaybackCodecs = {
   videoCodec: string | null;

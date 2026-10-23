@@ -135,10 +135,14 @@ export type RuntimeErrorCode =
   | 'creator_agent_steer_unavailable'
   | 'creator_conflict_requires_user'
   | 'creator_llm_config_missing'
+  | 'creator_llm_quota_exceeded'
   | 'creator_transcription_config_missing'
   | 'creator_transcription_language_unsupported'
   | 'creator_transcription_language_unknown'
   | 'creator_transcription_timestamps_unavailable'
+  | 'creator_ocr_engine_missing'
+  | 'creator_ocr_language_unsupported'
+  | 'creator_ocr_no_text'
   | 'creator_tts_config_missing'
   | 'creator_tts_runtime_unavailable'
   | 'creator_tts_upstream_error'
@@ -181,6 +185,9 @@ export function publicErrorKindForCode(code: string): PublicErrorFacts['kind'] |
   if (normalized === 'AUDIO_TRANSCRIPTION_INVALID_RESPONSE') return 'invalid-response';
   if (normalized === 'AUDIO_TRANSCRIPTION_TIMESTAMPS_MISSING') return 'unsupported';
   if (normalized === 'CREATOR_TRANSCRIPTION_TIMESTAMPS_UNAVAILABLE') return 'unsupported';
+  if (normalized === 'CREATOR_OCR_LANGUAGE_UNSUPPORTED') return 'unsupported';
+  if (normalized === 'CREATOR_OCR_NO_TEXT') return 'validation';
+  if (normalized === 'CREATOR_LLM_QUOTA_EXCEEDED') return 'rate-limited';
   if (normalized === 'AUDIO_TRANSCRIPTION_API_FAILED') return 'provider-failed';
   if (normalized === 'GATEWAY_AUTH_REQUIRED') return 'unauthorized';
   if (normalized === 'GATEWAY_ACCOUNT_DISABLED' || normalized === 'GATEWAY_CREDITS_INSUFFICIENT') return 'http-rejected';

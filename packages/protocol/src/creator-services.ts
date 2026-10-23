@@ -225,6 +225,7 @@ export function creatorPreflightFailure(result: CreatorPreflightResponse): {
     'transcription-language': 'creator_transcription_language_unsupported',
     'transcription-timestamps': 'creator_transcription_timestamps_unavailable',
     'ocr-engine': 'creator_ocr_engine_missing',
+    'ocr-language': 'creator_ocr_language_unsupported',
     'input-file': 'creator_stage_input_missing',
     'managed-directory': 'creator_storage_failed',
     ffmpeg: 'creator_dependency_prepare_failed',

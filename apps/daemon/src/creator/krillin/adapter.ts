@@ -31,6 +31,8 @@ import { readKrillinRuntimeManifest, resolveInside } from './manifest.js';
 import type { YtDlpRuntime } from '../yt-dlp/runtime.js';
 import { assessKrillinTranscription } from './transcription-language.js';
 import { extractVideoSubtitleOcr, type OcrRegion } from '../ocr/video-subtitle-ocr.js';
+import { resolveManagedOcrLanguage } from '../ocr/component.js';
+import { prepareVideoTranslationOcrSource } from '../download/executor.js';
 
 export function createKrillinExecutor(input: {
   resourceRoot: string;
@@ -53,42 +55,63 @@ export function createKrillinExecutor(input: {
       });
       const ffprobe = executablePath(input.resourceRoot, /(?:^|\/)ffprobe(?:\.exe)?$/i);
       const materializedArtifacts = await writeArtifactIndex(input.jobsRoot, stage);
+      let acquiredOcrSource: CreatorExecutorOutput | undefined;
 
       if (stage.stageRun.stageId === 'subtitle' && stage.job.state?.captionSourceMethod === 'ocr') {
         const hasExistingSub = materializedArtifacts.some(a => a.kind === 'source_subtitle' || a.kind === 'target_subtitle');
         if (!hasExistingSub) {
-          const sourceVideo = materializedArtifacts.find(a => a.kind === 'source_video');
-          if (sourceVideo?.path) {
-            let ffmpeg: string | undefined;
-            try {
-              ffmpeg = executablePath(input.resourceRoot, /(?:^|\/)ffmpeg(?:\.exe)?$/i);
-            } catch {
-              ffmpeg = 'ffmpeg';
+          let sourceVideo = materializedArtifacts.find(a => a.kind === 'source_video');
+          const sourceUrl = stringValue(stage.job.state.sourceUrl);
+          if (sourceVideo?.path === undefined && stage.job.state.sourceType === 'url' && sourceUrl) {
+            const ytDlp = input.getYtDlpRuntime?.(sourceUrl);
+            if (ytDlp === undefined) {
+              throw new CreatorExecutorError('dependency_not_packaged', 'yt-dlp is required to download the video before OCR');
             }
-            const ocrResult = await extractVideoSubtitleOcr({
-              videoPath: sourceVideo.path,
+            const ffmpeg = executablePath(input.resourceRoot, /(?:^|\/)ffmpeg(?:\.exe)?$/i);
+            acquiredOcrSource = await prepareVideoTranslationOcrSource({
+              configStore: input.configStore,
+              ytDlpPath: ytDlp.executable,
+              ytDlpPrefixArgs: ytDlp.prefixArgs,
+              ytDlpEnv: ytDlp.env,
+              getYtDlpRuntime: current => input.getYtDlpRuntime?.(current) ?? ytDlp,
               ffmpegPath: ffmpeg,
-              originLang: typeof stage.job.state?.sourceLanguage === 'string' ? stage.job.state.sourceLanguage : undefined,
-              ocrRegion: (stage.job.state?.ocrRegion as OcrRegion) ?? 'bottom_25',
-              workdir: stage.workdir,
-              reportProgress(prog) {
-                stage.reportProgress({
-                  phase: prog.phase,
-                  percent: prog.percent,
-                  message: prog.message
-                });
-              }
-            });
-            if (ocrResult.srtContent) {
-              const ocrSrtPath = join(stage.workdir, 'ocr_source.srt');
-              await writeFile(ocrSrtPath, ocrResult.srtContent, 'utf8');
-              materializedArtifacts.push({
-                id: 'ocr-source-subtitle',
-                kind: 'source_subtitle',
-                path: ocrSrtPath
-              });
-            }
+              ffprobePath: ffprobe
+            }, stage);
+            sourceVideo = {
+              id: 'ocr-source-video',
+              kind: 'source_video',
+              path: acquiredOcrSource.path!
+            };
+            materializedArtifacts.push(sourceVideo);
           }
+          if (sourceVideo?.path === undefined) {
+            throw new CreatorExecutorError('creator_stage_input_missing', 'OCR requires a local source video');
+          }
+          const sourceLanguage = typeof stage.job.state.sourceLanguage === 'string'
+            ? stage.job.state.sourceLanguage
+            : undefined;
+          const managedLanguage = await resolveManagedOcrLanguage(sourceLanguage);
+          const ocrResult = await extractVideoSubtitleOcr({
+            videoPath: sourceVideo.path,
+            ffmpegPath: executablePath(input.resourceRoot, /(?:^|\/)ffmpeg(?:\.exe)?$/i),
+            originLang: sourceLanguage,
+            managedLanguage,
+            ocrRegion: (stage.job.state.ocrRegion as OcrRegion) ?? 'bottom_25',
+            signal: stage.signal,
+            workdir: stage.workdir,
+            reportProgress(progress) { stage.reportProgress(progress); }
+          });
+          if (!ocrResult.srtContent || ocrResult.cueCount === 0) {
+            throw new CreatorExecutorError(
+              'creator_ocr_no_text',
+              'No burned-in subtitles were detected in the selected video region'
+            );
+          }
+          const ocrSrtPath = join(stage.workdir, 'ocr_source.srt');
+          await mkdir(stage.workdir, { recursive: true });
+          await writeFile(ocrSrtPath, ocrResult.srtContent, 'utf8');
+          await validateSrtFile(ocrSrtPath);
+          materializedArtifacts.push({ id: 'ocr-source-subtitle', kind: 'source_subtitle', path: ocrSrtPath });
         }
       }
 
@@ -208,6 +231,12 @@ export function createKrillinExecutor(input: {
         artifacts: relevantArtifacts,
         ffprobe
       });
+      if (acquiredOcrSource !== undefined && !outputs.some(output => output.kind === 'source_video')) {
+        outputs.push({
+          ...acquiredOcrSource,
+          sourceArtifactIds: stage.inputArtifacts.map(artifact => artifact.id)
+        });
+      }
       if (transcriptionMetadata) for (const output of outputs) output.metadata = { ...output.metadata, transcription: transcriptionMetadata };
       return {
         outputs: stage === stageInput ? outputs : outputs.map(output => ({
@@ -247,7 +276,9 @@ function requiresTranscriptionDependency(
   stageId: string,
   options: Record<string, unknown>
 ): boolean {
-  return stageId === 'subtitle' && options.captionSource !== 'platform';
+  return stageId === 'subtitle'
+    && options.captionSource !== 'platform'
+    && options.captionSource !== 'ocr';
 }
 
 async function ensureKrillinTranscriptionDependency(
@@ -299,6 +330,10 @@ export function normalizeKrillinFailure(error: { code?: string; kind?: string; m
   if (/OpenAI.*(?:杞綍|转录|transcri)|(?:杞綍|转录|transcri).*OpenAI/i.test(message)) {
     return { code: 'creator_transcription_config_missing', message };
   }
+  if (
+    /(?:codex\s+llm|\bllm\b|大模型|文本翻译).*(?:usage.?limit|quota|credits?|rate.?limit|limit.?exceeded)/i.test(message)
+    || /(?:usage.?limit|quota|credits?|rate.?limit|limit.?exceeded).*(?:codex\s+llm|\bllm\b|大模型|文本翻译)/i.test(message)
+  ) return { code: 'creator_llm_quota_exceeded', message };
   if (error?.code === 'usage' || error?.kind === 'usage') {
     if (/(?:TTS|閰嶉煶|配音|语音合成)/i.test(message)) {
       return { code: 'creator_tts_config_missing', message };
@@ -329,9 +364,11 @@ export function buildKrillinStageOptions(input: CreatorExecutorInput): Record<st
     ocrRegion: state.ocrRegion ?? 'bottom_25',
     sourceOnly: input.job.templateId === 'stickman-video'
       && input.stageRun.stageId === 'source-transcript',
-    prepareVideo: input.job.templateId !== 'video-translation',
+    prepareVideo: input.job.templateId !== 'video-translation' || state.captionSourceMethod === 'ocr',
     audioOnly: input.job.templateId === 'video-translation' && state.composeVideo !== true,
-    bilingual: input.stageRun.stageId === 'subtitles' || state.bilingual === true,
+    bilingual: state.captionSourceMethod === 'ocr'
+      ? false
+      : input.stageRun.stageId === 'subtitles' || state.bilingual === true,
     bilingualTop: state.subtitlePosition !== 'bottom',
     ttsProvider: typeof state.ttsProvider === 'string' ? state.ttsProvider : undefined,
     ttsModel: typeof state.ttsModel === 'string' ? state.ttsModel : undefined,
@@ -413,7 +450,7 @@ export function buildKrillinSubtitleStyle(
   const sizes = subtitleFontSizes(style.fontSize);
 
   const ocrPos = ocrOptions?.ocrSubtitlePosition;
-  const borderStyle = ocrPos === 'mask_replace' ? 3 : 1;
+  const borderStyle = 1;
   const horizontalMajorMarginV = ocrPos === 'below_original' ? 10 : ocrPos === 'above_original' ? 70 : 20;
   const verticalMajorMarginV = ocrPos === 'below_original' ? 45 : ocrPos === 'above_original' ? 140 : 101;
 

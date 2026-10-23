@@ -846,7 +846,7 @@ function creatorConfigurationInput(
     )
     ? error.details.service
     : undefined;
-  const section = code === 'creator_llm_config_missing'
+  const section = code === 'creator_llm_config_missing' || code === 'creator_llm_quota_exceeded'
     ? 'llm'
     : ['creator_transcription_config_missing', 'creator_transcription_language_unsupported', 'creator_transcription_timestamps_unavailable'].includes(code)
       ? 'transcription'

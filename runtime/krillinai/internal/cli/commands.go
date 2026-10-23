@@ -120,7 +120,7 @@ Flags:
   --user-lang <lang>         UI language for generated messages
   --workdir <dir>            Task working directory
   --task-id <id>             Optional task id
-  --caption-source <source>  any, platform, manual, auto, or whisper
+  --caption-source <source>  any, platform, manual, auto, whisper, or ocr
   --prepare-video            download original video for later rendering
   --source-only              generate source-language subtitles without translation
   --input-srt <file>         use existing UTF-8 SRT instead of transcription

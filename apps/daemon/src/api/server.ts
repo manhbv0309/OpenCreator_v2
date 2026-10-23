@@ -932,7 +932,11 @@ export async function buildServer(input: BuildServerInput) {
         configStore: creatorServicesConfigStore,
         getYtDlpRuntime,
         verificationCachePath: krillinVerificationCachePath,
-        ensureRuntimeReady: () => ensureKrillinRuntimeReady()
+        ensureRuntimeReady: () => ensureKrillinRuntimeReady(),
+        getCodexLlmConfig() {
+          const baseUrl = resolveListeningOrigin(server.server.address());
+          return baseUrl === undefined ? undefined : krillinCodexLlmGateway.config(baseUrl);
+        }
       }));
     }
     if (

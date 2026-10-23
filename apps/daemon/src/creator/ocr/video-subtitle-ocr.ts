@@ -3,10 +3,12 @@ import { availableParallelism } from 'node:os';
 import { promisify } from 'node:util';
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import sharp from 'sharp';
 import Tesseract from 'tesseract.js';
 import {
   clusterOcrFrames,
   buildSrtFromCues,
+  isSemanticOcrText,
   type ClusteredSubtitleCue,
   type RawOcrFrame
 } from './subtitle-clustering.js';
@@ -17,7 +19,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export type OcrRegion = 'bottom_25' | 'bottom_33' | 'full';
+export type OcrRegion = 'bottom_band' | 'bottom_25' | 'bottom_33' | 'full';
 
 export type VideoSubtitleOcrOptions = {
   videoPath: string;
@@ -61,8 +63,10 @@ export function mapLanguageToTesseract(lang?: string): string {
   return 'eng';
 }
 
-export function buildCropFilter(region: OcrRegion = 'bottom_25'): string | null {
+export function buildCropFilter(region: OcrRegion = 'bottom_band'): string | null {
   switch (region) {
+    case 'bottom_band':
+      return 'crop=iw*0.90:ih*0.22:iw*0.05:ih*0.65';
     case 'bottom_25':
       return 'crop=iw:ih*0.25:0:ih*0.75';
     case 'bottom_33':
@@ -138,7 +142,9 @@ async function recognizeFrames(input: VideoSubtitleOcrOptions & {
   if (input.recognizeFrame) {
     await runPool(input.frameFiles.length, input.concurrency ?? 2, input.signal, async index => {
       const text = (await input.recognizeFrame!(join(input.framesDir, input.frameFiles[index]!))).trim();
-      if (text) output[index] = frameResult(input.frameFiles[index]!, index, frameIntervalSec, text);
+      if (text && text.toUpperCase() !== 'EMPTY' && isSemanticOcrText(text)) {
+        output[index] = frameResult(input.frameFiles[index]!, index, frameIntervalSec, text);
+      }
       completed += 1;
       reportRecognitionProgress(input, completed);
     });
@@ -169,9 +175,14 @@ async function recognizeFrames(input: VideoSubtitleOcrOptions & {
         throwIfAborted(input.signal);
         const index = next++;
         if (index >= input.frameFiles.length) return;
-        const result = await worker.recognize(join(input.framesDir, input.frameFiles[index]!));
+        const framePath = join(input.framesDir, input.frameFiles[index]!);
+        const preprocessed = await prepareFrameForOcr(framePath);
+        const result = await worker.recognize(preprocessed);
         const text = result.data.text.trim();
-        if (text) output[index] = frameResult(input.frameFiles[index]!, index, frameIntervalSec, text);
+        const conf = result.data.confidence;
+        if (text && conf >= 45 && isSemanticOcrText(text)) {
+          output[index] = frameResult(input.frameFiles[index]!, index, frameIntervalSec, text);
+        }
         completed += 1;
         reportRecognitionProgress(input, completed);
       }
@@ -181,6 +192,26 @@ async function recognizeFrames(input: VideoSubtitleOcrOptions & {
     await Promise.allSettled(workers.map(worker => worker.terminate()));
   }
   return output.filter((frame): frame is RawOcrFrame => frame !== undefined);
+}
+
+async function prepareFrameForOcr(framePath: string): Promise<Buffer | string> {
+  try {
+    const meta = await sharp(framePath).metadata();
+    if (meta.width && meta.height) {
+      const targetWidth = Math.max(1000, meta.width * 2);
+      return await sharp(framePath)
+        .grayscale()
+        .normalize()
+        .sharpen()
+        .resize({ width: targetWidth })
+        .extend({ top: 30, bottom: 30, left: 30, right: 30, background: '#ffffff' })
+        .png()
+        .toBuffer();
+    }
+  } catch {
+    // fallback to original path if sharp fails
+  }
+  return framePath;
 }
 
 function frameResult(file: string, fallbackIndex: number, interval: number, text: string): RawOcrFrame {

@@ -88,6 +88,7 @@ describe('OCR subtitle clustering and SRT generation', () => {
     expect(ocrLanguageCode('zh_cn')).toBe('chi_sim');
     expect(ocrLanguageCode('vi')).toBe('vie');
     expect(ocrLanguageCode('it')).toBeUndefined();
+    expect(buildCropFilter('bottom_band')).toBe('crop=iw*0.90:ih*0.22:iw*0.05:ih*0.65');
     expect(buildCropFilter('bottom_25')).toBe('crop=iw:ih*0.25:0:ih*0.75');
     expect(buildCropFilter('full')).toBeNull();
     const language = await resolveManagedOcrLanguage('vi');

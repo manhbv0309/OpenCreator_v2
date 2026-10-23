@@ -96,7 +96,7 @@ export function createKrillinExecutor(input: {
             ffmpegPath: executablePath(input.resourceRoot, /(?:^|\/)ffmpeg(?:\.exe)?$/i),
             originLang: sourceLanguage,
             managedLanguage,
-            ocrRegion: (stage.job.state.ocrRegion as OcrRegion) ?? 'bottom_25',
+            ocrRegion: (stage.job.state.ocrRegion as OcrRegion) ?? 'bottom_band',
             signal: stage.signal,
             workdir: stage.workdir,
             reportProgress(progress) { stage.reportProgress(progress); }
@@ -107,9 +107,18 @@ export function createKrillinExecutor(input: {
               'No burned-in subtitles were detected in the selected video region'
             );
           }
+          let finalSrtContent = ocrResult.srtContent;
+          const llmConfig = input.getCodexLlmConfig?.();
+          if (llmConfig?.baseUrl && llmConfig?.apiKey) {
+            finalSrtContent = await polishOcrSubtitlesWithLlm({
+              srtContent: ocrResult.srtContent,
+              llmConfig,
+              signal: stage.signal
+            });
+          }
           const ocrSrtPath = join(stage.workdir, 'ocr_source.srt');
           await mkdir(stage.workdir, { recursive: true });
-          await writeFile(ocrSrtPath, ocrResult.srtContent, 'utf8');
+          await writeFile(ocrSrtPath, finalSrtContent, 'utf8');
           await validateSrtFile(ocrSrtPath);
           materializedArtifacts.push({ id: 'ocr-source-subtitle', kind: 'source_subtitle', path: ocrSrtPath });
         }
@@ -757,6 +766,48 @@ function stringValue(value: unknown): string | undefined {
 
 function nonEmptyString(value: CreatorJson | undefined): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+async function polishOcrSubtitlesWithLlm(input: {
+  srtContent: string;
+  llmConfig: { baseUrl: string; apiKey: string; model: string };
+  signal?: AbortSignal;
+}): Promise<string> {
+  const prompt = [
+    'You are an expert video subtitle editor. The following subtitles were extracted from a video via OCR and may have minor character typos, isolated noise symbols, or non-subtitle artifacts.',
+    'Please review and clean the subtitles:',
+    '- Remove any cues that are purely non-speech noise artifacts, random symbols, or gibberish.',
+    '- Fix obvious OCR misrecognitions while preserving the original spoken/subtitle meaning.',
+    '- Renumber the remaining valid cues starting from 1, keeping their timestamps intact.',
+    '- Output ONLY the clean SRT with no explanations, no commentary, no markdown code fences.',
+    '',
+    'Input SRT:',
+    input.srtContent
+  ].join('\n');
+
+  try {
+    const response = await fetch(`${input.llmConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${input.llmConfig.apiKey}`
+      },
+      body: JSON.stringify({
+        model: input.llmConfig.model,
+        messages: [{ role: 'user', content: prompt }],
+        stream: false
+      }),
+      signal: input.signal
+    });
+    if (!response.ok) return input.srtContent;
+    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) return input.srtContent;
+    const cleaned = content.replace(/^```(?:srt)?\n?/i, '').replace(/\n?```$/i, '').trim();
+    return cleaned || input.srtContent;
+  } catch {
+    return input.srtContent;
+  }
 }
 
 function finiteNumber(value: CreatorJson | undefined): number | undefined {

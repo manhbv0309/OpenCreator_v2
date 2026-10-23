@@ -98,7 +98,7 @@ type TranslationSettingsSnapshot = {
   preferPlatformCaptions: boolean;
   captionSourceMethod?: 'audio' | 'ocr';
   ocrSubtitlePosition?: 'below_original' | 'above_original';
-  ocrRegion?: 'bottom_25' | 'bottom_33' | 'full';
+  ocrRegion?: 'bottom_band' | 'bottom_25' | 'bottom_33' | 'full';
   subtitleFont: SubtitleFont;
   subtitleWeight: SubtitleWeight;
   subtitleSize: SubtitleSize;
@@ -648,7 +648,7 @@ function deserializeResultVersions(value: CreatorJson | undefined): TranslationR
         preferPlatformCaptions: settingsRecord.preferPlatformCaptions,
         captionSourceMethod: settingsRecord.captionSourceMethod === 'ocr' ? 'ocr' : 'audio',
         ocrSubtitlePosition: settingsRecord.ocrSubtitlePosition === 'above_original' ? 'above_original' : 'below_original',
-        ocrRegion: settingsRecord.ocrRegion === 'bottom_33' || settingsRecord.ocrRegion === 'full'
+        ocrRegion: settingsRecord.ocrRegion === 'bottom_band' || settingsRecord.ocrRegion === 'bottom_33' || settingsRecord.ocrRegion === 'full'
           ? settingsRecord.ocrRegion
           : 'bottom_25',
         ...readSubtitleStyleSettings(settingsRecord, {}, undefined),
@@ -919,11 +919,13 @@ function legacyResultVersionsFromArtifacts(
           ocrSubtitlePosition: sourceState.ocrSubtitlePosition === 'above_original'
             ? 'above_original'
             : persisted?.settings.ocrSubtitlePosition ?? 'below_original',
-          ocrRegion: sourceState.ocrRegion === 'bottom_33'
-            ? 'bottom_33'
-            : sourceState.ocrRegion === 'full'
-              ? 'full'
-              : persisted?.settings.ocrRegion ?? 'bottom_25',
+          ocrRegion: sourceState.ocrRegion === 'bottom_band'
+            ? 'bottom_band'
+            : sourceState.ocrRegion === 'bottom_33'
+              ? 'bottom_33'
+              : sourceState.ocrRegion === 'full'
+                ? 'full'
+                : persisted?.settings.ocrRegion ?? 'bottom_25',
           ...readSubtitleStyleSettings(sourceState, fallbackState, persisted),
           dubbing: typeof sourceState.dubbing === 'boolean'
             ? sourceState.dubbing
@@ -1050,11 +1052,13 @@ function resultVersionFromSnapshot(
       ocrSubtitlePosition: (sourceState.ocrSubtitlePosition === 'above_original'
         ? 'above_original'
         : persisted?.settings.ocrSubtitlePosition ?? 'below_original'),
-      ocrRegion: (sourceState.ocrRegion === 'bottom_33'
-        ? 'bottom_33'
-        : sourceState.ocrRegion === 'full'
-          ? 'full'
-          : persisted?.settings.ocrRegion ?? 'bottom_25'),
+      ocrRegion: (sourceState.ocrRegion === 'bottom_band'
+        ? 'bottom_band'
+        : sourceState.ocrRegion === 'bottom_33'
+          ? 'bottom_33'
+          : sourceState.ocrRegion === 'full'
+            ? 'full'
+            : persisted?.settings.ocrRegion ?? 'bottom_25'),
       ...readSubtitleStyleSettings(sourceState, fallbackState, persisted),
       dubbing: readBooleanSetting(sourceState, fallbackState, persisted, 'dubbing', false),
       ttsProvider: readTtsProviderSetting(sourceState, fallbackState, persisted),
@@ -1800,7 +1804,7 @@ export default function VideoTranslationWorkspace(props: {
   const [preferPlatformCaptions, setPreferPlatformCaptions] = useState(true);
   const [captionSourceMethod, setCaptionSourceMethod] = useState<'audio' | 'ocr'>('audio');
   const [ocrSubtitlePosition, setOcrSubtitlePosition] = useState<'below_original' | 'above_original'>('below_original');
-  const [ocrRegion, setOcrRegion] = useState<'bottom_25' | 'bottom_33' | 'full'>('bottom_25');
+  const [ocrRegion, setOcrRegion] = useState<'bottom_band' | 'bottom_25' | 'bottom_33' | 'full'>('bottom_25');
   const [subtitleFont, setSubtitleFont] = useState<SubtitleFont>(defaultSubtitleStyle.subtitleFont);
   const [subtitleWeight, setSubtitleWeight] = useState<SubtitleWeight>(defaultSubtitleStyle.subtitleWeight);
   const [subtitleSize, setSubtitleSize] = useState<SubtitleSize>(defaultSubtitleStyle.subtitleSize);
@@ -2027,7 +2031,7 @@ export default function VideoTranslationWorkspace(props: {
     else if (persisted.captionSourceMethod === 'auto') setCaptionSourceMethod('audio');
     if (persisted.ocrSubtitlePosition === 'below_original' || persisted.ocrSubtitlePosition === 'above_original') setOcrSubtitlePosition(persisted.ocrSubtitlePosition);
     else if (persisted.ocrSubtitlePosition === 'mask_replace') setOcrSubtitlePosition('below_original');
-    if (persisted.ocrRegion === 'bottom_25' || persisted.ocrRegion === 'bottom_33' || persisted.ocrRegion === 'full') {
+    if (persisted.ocrRegion === 'bottom_band' || persisted.ocrRegion === 'bottom_25' || persisted.ocrRegion === 'bottom_33' || persisted.ocrRegion === 'full') {
       setOcrRegion(persisted.ocrRegion);
     }
     const persistedSubtitleStyle = readSubtitleStyleSettings(persisted, {}, undefined);
@@ -3760,6 +3764,7 @@ export default function VideoTranslationWorkspace(props: {
           <span>{l('OCR 识别区域', 'OCR recognition region')}</span>
           <div className="video-translation-select-wrap">
             <select aria-label={l('OCR 识别区域', 'OCR recognition region')} value={ocrRegion} onChange={event => setOcrRegion(event.target.value as typeof ocrRegion)}>
+              <option value="bottom_band">{l('竖屏字幕带 (推荐)', 'Vertical subtitle band (Recommended)')}</option>
               <option value="bottom_25">{l('底部 25%', 'Bottom 25%')}</option>
               <option value="bottom_33">{l('底部 33%', 'Bottom 33%')}</option>
               <option value="full">{l('整个画面', 'Full frame')}</option>

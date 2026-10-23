@@ -29,7 +29,7 @@ function createVideoTranslationTemplateDefinition(version: 1 | 2): CreatorTempla
       preferPlatformCaptions: z.boolean().default(true),
       captionSourceMethod: z.enum(['audio', 'ocr', 'auto']).default('audio').transform(value => value === 'ocr' ? 'ocr' as const : 'audio' as const),
       ocrSubtitlePosition: z.enum(['below_original', 'above_original', 'mask_replace']).default('below_original').transform(value => value === 'above_original' ? 'above_original' as const : 'below_original' as const),
-      ocrRegion: z.enum(['bottom_band', 'bottom_25', 'bottom_33', 'full']).default('bottom_25'),
+      ocrRegion: z.enum(['bottom_band', 'bottom_25', 'bottom_33', 'full']).default('bottom_band'),
       bilingual: z.boolean().default(true),
       subtitlePosition: z.enum(['top', 'bottom']).default('top'),
       ...(version === 2

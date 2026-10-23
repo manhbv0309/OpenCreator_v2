@@ -110,11 +110,19 @@ export function createKrillinExecutor(input: {
           let finalSrtContent = ocrResult.srtContent;
           const llmConfig = input.getCodexLlmConfig?.();
           if (llmConfig?.baseUrl && llmConfig?.apiKey) {
-            finalSrtContent = await polishOcrSubtitlesWithLlm({
-              srtContent: ocrResult.srtContent,
-              llmConfig,
-              signal: stage.signal
-            });
+            try {
+              const polished = await polishOcrSubtitlesWithLlm({
+                srtContent: ocrResult.srtContent,
+                llmConfig,
+                signal: stage.signal
+              });
+              const polishedCueCount = (polished.match(/\d+\n\d{2}:\d{2}:\d{2}/g) || []).length;
+              if (polishedCueCount >= Math.min(3, Math.floor(ocrResult.cueCount * 0.3))) {
+                finalSrtContent = polished;
+              }
+            } catch {
+              // Preserve raw OCR if polish fails
+            }
           }
           const ocrSrtPath = join(stage.workdir, 'ocr_source.srt');
           await mkdir(stage.workdir, { recursive: true });
@@ -774,10 +782,10 @@ async function polishOcrSubtitlesWithLlm(input: {
   signal?: AbortSignal;
 }): Promise<string> {
   const prompt = [
-    'You are an expert video subtitle editor. The following subtitles were extracted from a video via OCR and may have minor character typos, isolated noise symbols, or non-subtitle artifacts.',
+    'You are an expert video subtitle editor. The following subtitles were extracted from a video via OCR and may have character typos, slight misspellings, or isolated noise symbols.',
     'Please review and clean the subtitles:',
-    '- Remove any cues that are purely non-speech noise artifacts, random symbols, or gibberish.',
-    '- Fix obvious OCR misrecognitions while preserving the original spoken/subtitle meaning.',
+    '- Fix OCR misrecognitions and restore the intended subtitle meaning (e.g. recipe steps, ingredients, speech) from context.',
+    '- Remove ONLY lines that are entirely meaningless punctuation or random noise. Do NOT drop valid sentences or dialogue steps.',
     '- Renumber the remaining valid cues starting from 1, keeping their timestamps intact.',
     '- Output ONLY the clean SRT with no explanations, no commentary, no markdown code fences.',
     '',

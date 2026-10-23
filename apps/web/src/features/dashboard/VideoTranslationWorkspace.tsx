@@ -438,7 +438,7 @@ function sameSettings(left: TranslationSettingsSnapshot, right: TranslationSetti
     && left.preferPlatformCaptions === right.preferPlatformCaptions
     && (left.captionSourceMethod ?? 'audio') === (right.captionSourceMethod ?? 'audio')
     && (left.ocrSubtitlePosition ?? 'below_original') === (right.ocrSubtitlePosition ?? 'below_original')
-    && (left.ocrRegion ?? 'bottom_25') === (right.ocrRegion ?? 'bottom_25')
+    && (left.ocrRegion ?? 'bottom_band') === (right.ocrRegion ?? 'bottom_band')
     && sameSubtitleStyle(left, right)
     && left.dubbing === right.dubbing
     && left.ttsProvider === right.ttsProvider
@@ -533,10 +533,13 @@ export function videoTranslationRegenerationStage(
       || staleArtifactKinds.has('dubbed_video')
     )
   ) return 'tts';
+  const hasRenderedVideo = (version.artifactRefs['horizontal_video']?.length ?? 0) > 0
+    || (version.artifactRefs['vertical_video']?.length ?? 0) > 0;
   if (
     settings.composeVideo
     && (
-      changes.subtitleContentChanged
+      !hasRenderedVideo
+      || changes.subtitleContentChanged
       || changes.subtitleStyleChanged
       || changes.voiceChanged
       || changes.outputChanged
@@ -650,7 +653,7 @@ function deserializeResultVersions(value: CreatorJson | undefined): TranslationR
         ocrSubtitlePosition: settingsRecord.ocrSubtitlePosition === 'above_original' ? 'above_original' : 'below_original',
         ocrRegion: settingsRecord.ocrRegion === 'bottom_band' || settingsRecord.ocrRegion === 'bottom_33' || settingsRecord.ocrRegion === 'full'
           ? settingsRecord.ocrRegion
-          : 'bottom_25',
+          : 'bottom_band',
         ...readSubtitleStyleSettings(settingsRecord, {}, undefined),
         dubbing: settingsRecord.dubbing,
         ttsProvider: isTtsProvider(settingsRecord.ttsProvider)
@@ -925,7 +928,7 @@ function legacyResultVersionsFromArtifacts(
               ? 'bottom_33'
               : sourceState.ocrRegion === 'full'
                 ? 'full'
-                : persisted?.settings.ocrRegion ?? 'bottom_25',
+                : persisted?.settings.ocrRegion ?? 'bottom_band',
           ...readSubtitleStyleSettings(sourceState, fallbackState, persisted),
           dubbing: typeof sourceState.dubbing === 'boolean'
             ? sourceState.dubbing
@@ -1058,7 +1061,7 @@ function resultVersionFromSnapshot(
           ? 'bottom_33'
           : sourceState.ocrRegion === 'full'
             ? 'full'
-            : persisted?.settings.ocrRegion ?? 'bottom_25'),
+            : persisted?.settings.ocrRegion ?? 'bottom_band'),
       ...readSubtitleStyleSettings(sourceState, fallbackState, persisted),
       dubbing: readBooleanSetting(sourceState, fallbackState, persisted, 'dubbing', false),
       ttsProvider: readTtsProviderSetting(sourceState, fallbackState, persisted),
@@ -1804,7 +1807,7 @@ export default function VideoTranslationWorkspace(props: {
   const [preferPlatformCaptions, setPreferPlatformCaptions] = useState(true);
   const [captionSourceMethod, setCaptionSourceMethod] = useState<'audio' | 'ocr'>('audio');
   const [ocrSubtitlePosition, setOcrSubtitlePosition] = useState<'below_original' | 'above_original'>('below_original');
-  const [ocrRegion, setOcrRegion] = useState<'bottom_band' | 'bottom_25' | 'bottom_33' | 'full'>('bottom_25');
+  const [ocrRegion, setOcrRegion] = useState<'bottom_band' | 'bottom_25' | 'bottom_33' | 'full'>('bottom_band');
   const [subtitleFont, setSubtitleFont] = useState<SubtitleFont>(defaultSubtitleStyle.subtitleFont);
   const [subtitleWeight, setSubtitleWeight] = useState<SubtitleWeight>(defaultSubtitleStyle.subtitleWeight);
   const [subtitleSize, setSubtitleSize] = useState<SubtitleSize>(defaultSubtitleStyle.subtitleSize);
@@ -2083,11 +2086,19 @@ export default function VideoTranslationWorkspace(props: {
     ) ?? persistedOrientation ?? 'landscape');
     if (typeof persisted.verticalTitle === 'string') setVerticalTitle(persisted.verticalTitle);
     if (typeof persisted.verticalSubtitle === 'string') setVerticalSubtitle(persisted.verticalSubtitle);
+    const fileSourceReady = persisted.sourceType !== 'file'
+      || persistedSourceArtifact !== undefined
+      || videoFile !== null;
+    const maxAllowedStep = persisted.sourceType === 'subtitle'
+      ? 1
+      : !fileSourceReady
+        ? 0
+        : 2;
     if (persisted.currentStep === 0 || persisted.currentStep === 1 || persisted.currentStep === 2 || persisted.currentStep === 3) {
-      setCurrentStep(Math.min(persisted.currentStep, persisted.sourceType === 'subtitle' ? 1 : 2) as WizardStep);
+      setCurrentStep(Math.min(persisted.currentStep, maxAllowedStep) as WizardStep);
     }
     if (persisted.furthestStep === 0 || persisted.furthestStep === 1 || persisted.furthestStep === 2 || persisted.furthestStep === 3) {
-      setFurthestStep(Math.min(persisted.furthestStep, persisted.sourceType === 'subtitle' ? 1 : 2) as WizardStep);
+      setFurthestStep(Math.min(persisted.furthestStep, maxAllowedStep) as WizardStep);
     }
     const artifactVersions = resultVersionsFromArtifacts(creatorSession.job.artifacts, persisted);
     const latest = artifactVersions.at(-1);
@@ -2461,9 +2472,10 @@ export default function VideoTranslationWorkspace(props: {
     && sourceArtifactMatchesFile(registeredSourceArtifact, videoFile);
   const importedSourceSubtitle = creatorSession?.job.artifacts.find(artifact => artifact.id === creatorSession.state.importedSourceSubtitleId
     && artifact.kind === 'source_subtitle' && artifact.status === 'completed');
+  const hasLocalVideo = videoFile !== null || registeredSourceArtifact !== undefined;
   const hasSource = subtitleOnly ? importedSourceSubtitle !== undefined : sourceType === 'url'
     ? isValidVideoUrl(videoUrl)
-    : videoFile !== null || videoFileName !== null || registeredSourceArtifact !== undefined;
+    : hasLocalVideo;
   const latestStage = creatorSession?.job.stages.at(-1);
   const activeStage = creatorSession === null
     ? undefined
@@ -2864,6 +2876,11 @@ export default function VideoTranslationWorkspace(props: {
           ? `${outputLabel} · ${subtitleStyleLabel} · ${dubbing ? l('配音开启', 'Dubbing on') : l('无配音', 'No dubbing')}`
           : outputLabel;
   function openWizardStep(step: WizardStep) {
+    if (step > 0 && !hasSource) {
+      setCurrentStep(0);
+      setAttemptedContinue(true);
+      return;
+    }
     if (step > 0 && !sourceSelectionReady) {
       setCurrentStep(0);
       setAttemptedContinue(true);
@@ -3022,9 +3039,19 @@ export default function VideoTranslationWorkspace(props: {
   const hasConfigDraftChanges = draftAppliesToSelectedResult
     && (!settingsMatchSelectedResult
       || !sameSource(draftSourceSnapshot, selectedResult.source));
+  const selectedHasRenderedVideo = selectedResult === undefined || (
+    (selectedResult.artifactRefs['horizontal_video']?.length ?? 0) > 0
+    || (selectedResult.artifactRefs['vertical_video']?.length ?? 0) > 0
+  );
+  const needsInitialVideoRender = selectedResult !== undefined
+    && selectedResult.settings.composeVideo
+    && !selectedSubtitleOnly
+    && !selectedHasRenderedVideo
+    && (selectedResult.artifactRefs['target_subtitle']?.length ?? 0) > 0;
   const hasPendingChanges = subtitleNeedsRegeneration
     || hasConfigDraftChanges
-    || selectedHasStaleArtifacts;
+    || selectedHasStaleArtifacts
+    || needsInitialVideoRender;
   const regenerationSettings = hasConfigDraftChanges && selectedResult
     ? draftSettingsSnapshot
     : selectedResultSettings;
@@ -3214,6 +3241,12 @@ export default function VideoTranslationWorkspace(props: {
       setAttemptedContinue(true);
       return;
     }
+    if (sourceType === 'file' && videoFile === null && registeredSourceArtifact === undefined) {
+      setCurrentStep(0);
+      setAttemptedContinue(true);
+      setResultNotice(l('本地视频尚未上传，请重新选择视频后再试。', 'The local video has not been uploaded. Select it again and retry.'));
+      return;
+    }
     if (creatorSession === null) {
       setResultNotice(l('Creator Runtime 当前不可用，无法启动真实翻译任务', 'Creator Runtime is unavailable, so a real translation task cannot start.'));
       return;
@@ -3251,16 +3284,17 @@ export default function VideoTranslationWorkspace(props: {
         setSubmissionPhase('starting');
         setResultNotice(l('本地视频已上传，正在启动翻译...', 'The local video is uploaded. Starting translation...'));
       }
+      const runWorkflow = captionSourceMethod !== 'ocr';
       if (isRegeneration) {
         await executeRegeneration(stageId);
       } else {
         await creatorSession.applyAction({
           action: 'run-stage',
-          input: { stageId: 'subtitle', workflow: true }
+          input: { stageId: 'subtitle', workflow: runWorkflow }
         });
       }
       setWorkspacePhase('result');
-      setResultTab(subtitleOnly ? 'subtitles' : 'video');
+      setResultTab(runWorkflow ? (subtitleOnly ? 'subtitles' : 'video') : 'subtitles');
       setDraftBaseVersion(undefined);
       setResultNotice(isRegeneration
         ? stageId === undefined
@@ -3272,7 +3306,12 @@ export default function VideoTranslationWorkspace(props: {
               `新版本已从“${translationStageLabel(stageId, l)}”开始，已有前置产物会直接复用`,
               `The new version started from "${translationStageLabel(stageId, l)}" and will reuse existing upstream outputs.`
             )
-        : translationStartedNotice);
+        : runWorkflow
+          ? translationStartedNotice
+          : l(
+              '已启动字幕识别与翻译，完成后可在此预览编辑字幕或导出 SRT，确认无误后再合成视频。',
+              'Subtitle recognition and translation started. You can review or edit subtitles and export SRT, then render the video.'
+            ));
     } catch (cause) {
       if ((cause as { code?: unknown })?.code === 'creator_revision_conflict') {
         setStartRevisionConflict(true);
@@ -4288,12 +4327,13 @@ export default function VideoTranslationWorkspace(props: {
           {currentStep === 0 ? (
             <div className="video-translation-action-group">
               {attemptedContinue && !hasSource ? (
-                <p className="video-translation-error" role="alert">{subtitleOnly ? l('请先添加需要翻译的 SRT 字幕', 'Add an SRT file to translate first') : l('请先添加需要翻译的视频', 'Add a video to translate first')}</p>
+                <p className="video-translation-error" role="alert">{subtitleOnly
+                  ? l('请先添加需要翻译的 SRT 字幕', 'Add an SRT file to translate first')
+                  : typeof videoFileName === 'string' && videoFile === null && registeredSourceArtifact === undefined
+                    ? l(`上次选择了“${videoFileName}”。请重新选择该文件以上传。`, `Previously selected "${videoFileName}". Please re-select the file to upload.`)
+                    : l('请先添加需要翻译的视频', 'Add a video to translate first')}</p>
               ) : null}
-              {attemptedContinue && hasSource && !sourceSelectionReady ? (
-                <p className="video-translation-error" role="alert">{l('请确认链接有效，并选择要翻译的分集后继续', 'Check the link and choose a part before continuing')}</p>
-              ) : null}
-              <button className="video-translation-primary-action" type="button" disabled={subtitleImportPending} onClick={continueToSettings}>
+              <button className="video-translation-primary-action" type="button" disabled={subtitleImportPending || submitting} onClick={continueToSettings}>
                 {l('继续', 'Continue')}
                 <ArrowRight size={16} strokeWidth={1.8} aria-hidden="true" />
               </button>

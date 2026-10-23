@@ -143,7 +143,10 @@ export function createCreatorPreflight(input: {
         title: 'Input file missing',
         message: 'Select a local video file to process.',
         executionMode: 'local'
-      }, { label: 'Select an input file', deepLink: '#/settings?tab=diagnostics' });
+      }, {
+        label: 'Select an input file',
+        deepLink: `#/workbench?tool=${encodeURIComponent(job.templateId)}&jobId=${encodeURIComponent(job.id)}`
+      });
     }
     const resolvedInputs = resolveCreatorStageInputs(
       job,

@@ -67,15 +67,11 @@ export function isSemanticOcrText(text: string): boolean {
   if (!cleaned) return false;
   const noSpace = cleaned.replace(/\s+/g, '');
   if (noSpace.length < 2) return false;
-  // Count meaningful letters / CJK
+  // Count meaningful letters / CJK (Unicode category Letter and CJK Unified Ideographs)
   const letters = noSpace.replace(/[^\p{L}\u3400-\u9fff\u3040-\u30ff]/gu, '');
   if (letters.length < 2) return false;
   const meaningful = noSpace.replace(/[^\p{L}\p{N}\u3400-\u9fff\u3040-\u30ff]/gu, '');
-  if (meaningful.length / noSpace.length < 0.6) return false;
-  // If purely digits and punctuation symbols without words/CJK, it's noise
-  if (/^[\d\W_]+$/.test(noSpace)) return false;
-  // If contains noisy bracket/delimiter artifacts and has few letters, it is image noise
-  if (/[\[\]{}()<>«»\\/|_~]/.test(cleaned) && letters.length < 4) return false;
+  if (meaningful.length / noSpace.length < 0.5) return false;
   return true;
 }
 
@@ -84,8 +80,8 @@ export function clusterOcrFrames(
   options: ClusterOptions = {}
 ): ClusteredSubtitleCue[] {
   const frameIntervalSec = options.frameIntervalSec ?? 0.5;
-  const minDurationMs = options.minDurationMs ?? 600;
-  const similarityThreshold = options.similarityThreshold ?? 0.70;
+  const minDurationMs = Math.min(options.minDurationMs ?? 400, frameIntervalSec * 1000);
+  const similarityThreshold = options.similarityThreshold ?? 0.55;
 
   const validFrames = frames
     .map(f => ({ ...f, text: cleanOcrText(f.text) }))

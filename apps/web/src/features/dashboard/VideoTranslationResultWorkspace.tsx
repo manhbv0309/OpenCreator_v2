@@ -428,6 +428,8 @@ export default function VideoTranslationResultWorkspace(props: {
     findButtonRef.current?.focus();
   }
 
+  const isInitialVideoRender = props.videoOutputs.length === 0 && !props.subtitleOnly && Boolean(activeSubtitleOutput);
+
   const regenerationControls = (props.hasPendingChanges || props.regenerationPending) ? (
     <div className="video-result-regenerate" data-confirming={props.regenerationPending}
       role={props.regenerationPending ? 'group' : 'region'}
@@ -782,7 +784,7 @@ export default function VideoTranslationResultWorkspace(props: {
               </> : props.subtitleOnly && activeSubtitleOutput && props.onImmersiveChange ? <button ref={immersiveButtonRef} type="button" onClick={() => props.onImmersiveChange?.(true)}>
                 <Maximize2 size={15} />{l('深度编辑', 'Advanced editing')}
               </button> : null}
-              {props.immersive && !props.subtitleDownloads?.length && activeSubtitleOutput ? <button type="button" className="subtitle-editor-export"
+              {!props.subtitleDownloads?.length && activeSubtitleOutput ? <button type="button" className="subtitle-editor-export"
                 aria-label={l('导出字幕', 'Export subtitles')} title={l('导出字幕', 'Export subtitles')} disabled={hasSubtitleDrafts || props.subtitleSavePending}
                 onClick={() => props.onExport('subtitles', activeSubtitleOutput.artifactId)}><Download size={15} /><span>{l('导出字幕', 'Export subtitles')}</span></button> : null}
               {props.subtitleDownloads?.map(download => <button key={download.artifactId} type="button" className="subtitle-editor-export" aria-label={download.label} title={download.label}

@@ -66,7 +66,9 @@ export function mapLanguageToTesseract(lang?: string): string {
 export function buildCropFilter(region: OcrRegion = 'bottom_band'): string | null {
   switch (region) {
     case 'bottom_band':
-      return 'crop=iw*0.90:ih*0.22:iw*0.05:ih*0.65';
+      // Optimized for mobile vertical/short videos (TikTok/Douyin/Reels/Shorts)
+      // Captures the exact burned-in caption zone (Y: 72% to 85%)
+      return 'crop=iw*0.92:ih*0.13:iw*0.04:ih*0.72';
     case 'bottom_25':
       return 'crop=iw:ih*0.25:0:ih*0.75';
     case 'bottom_33':
@@ -84,7 +86,7 @@ export async function extractVideoSubtitleOcr(
     videoPath,
     workdir,
     originLang,
-    ocrRegion = 'bottom_25',
+    ocrRegion = 'bottom_band',
     fps = 2,
     reportProgress
   } = options;
@@ -163,7 +165,7 @@ async function recognizeFrames(input: VideoSubtitleOcrOptions & {
       gzip: true,
       cacheMethod: 'none'
     });
-    await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
+    await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE });
     return worker;
   }));
   let next = 0;
@@ -180,7 +182,7 @@ async function recognizeFrames(input: VideoSubtitleOcrOptions & {
         const result = await worker.recognize(preprocessed);
         const text = result.data.text.trim();
         const conf = result.data.confidence;
-        if (text && conf >= 45 && isSemanticOcrText(text)) {
+        if (text && conf >= 20 && isSemanticOcrText(text)) {
           output[index] = frameResult(input.frameFiles[index]!, index, frameIntervalSec, text);
         }
         completed += 1;

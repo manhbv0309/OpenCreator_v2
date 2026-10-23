@@ -672,7 +672,7 @@ describe('VideoTranslationWorkspace task controls', () => {
 
     fireEvent.click(within(workspace).getByRole('button', { name: '画面OCR' }));
     expect(within(workspace).getByRole('button', { name: '在原字幕下方' })).toHaveAttribute('aria-pressed', 'true');
-    expect(within(workspace).getByRole('combobox', { name: 'OCR 识别区域' })).toHaveValue('bottom_25');
+    expect(within(workspace).getByRole('combobox', { name: 'OCR 识别区域' })).toHaveValue('bottom_band');
     expect(within(workspace).queryByRole('switch', { name: '双语字幕' })).not.toBeInTheDocument();
     expect(within(workspace).queryByRole('switch', { name: '优先使用平台字幕' })).not.toBeInTheDocument();
     expect(within(workspace).getByText('OCR 模式会保留画面中已有的原字幕，只在成片中加入译文；双语 SRT 仍可下载。')).toBeVisible();
@@ -682,6 +682,45 @@ describe('VideoTranslationWorkspace task controls', () => {
     await waitFor(() => expect(current.state).toMatchObject({
       captionSourceMethod: 'ocr', ocrRegion: 'bottom_33', ocrSubtitlePosition: 'above_original'
     }));
+  });
+
+  it('runs OCR subtitle stage with workflow false and opens subtitle review first before rendering video', async () => {
+    let current = job({
+      status: 'draft',
+      revision: 0,
+      stages: [],
+      state: {
+        sourceType: 'url',
+        sourceUrl: 'https://www.youtube.com/watch?v=example',
+        captionSourceMethod: 'ocr',
+        currentStep: 2,
+        furthestStep: 2,
+        composeVideo: true,
+        sourceLanguage: 'zh',
+        targetLanguage: 'vi'
+      }
+    });
+    const applyAction = vi.fn(async (_id: string, request: { action: string; input?: Record<string, CreatorJson> }) => {
+      if (request.input?.patch) {
+        current = { ...current, revision: current.revision + 1, state: { ...current.state, ...request.input.patch as object } };
+      }
+      return { job: current };
+    });
+    render(
+      <LanguageProvider initialPreference="zh-CN">
+        <CreatorSessionProvider initialJob={current} service={{ applyAction, runAgentTurn: vi.fn(), preflight: vi.fn(async () => ({ canStart: true, ready: [], blocked: [], warning: [] })) } as never}>
+          <VideoTranslationWorkspace onBack={vi.fn()} />
+        </CreatorSessionProvider>
+      </LanguageProvider>
+    );
+
+    const workspace = screen.getByRole('region', { name: '视频翻译操作区' });
+    fireEvent.click(within(workspace).getByRole('button', { name: '开始翻译' }));
+    await waitFor(() => expect(applyAction).toHaveBeenCalledWith(
+      'job_control',
+      expect.objectContaining({ action: 'run-stage', input: { stageId: 'subtitle', workflow: false } })
+    ));
+    expect(screen.getByText('已启动字幕识别与翻译，完成后可在此预览编辑字幕或导出 SRT，确认无误后再合成视频。')).toBeInTheDocument();
   });
 
   it('restores subtitle-only results with source text, downloads and no video player', () => {

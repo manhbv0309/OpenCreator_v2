@@ -96,6 +96,9 @@ type TranslationSettingsSnapshot = {
   bilingual: boolean;
   subtitlePosition: SubtitlePosition;
   preferPlatformCaptions: boolean;
+  captionSourceMethod?: 'audio' | 'ocr' | 'auto';
+  ocrSubtitlePosition?: 'below_original' | 'above_original' | 'mask_replace';
+  ocrRegion?: 'bottom_25' | 'bottom_33' | 'full';
   subtitleFont: SubtitleFont;
   subtitleWeight: SubtitleWeight;
   subtitleSize: SubtitleSize;
@@ -433,6 +436,9 @@ function sameSettings(left: TranslationSettingsSnapshot, right: TranslationSetti
     && left.bilingual === right.bilingual
     && left.subtitlePosition === right.subtitlePosition
     && left.preferPlatformCaptions === right.preferPlatformCaptions
+    && (left.captionSourceMethod ?? 'audio') === (right.captionSourceMethod ?? 'audio')
+    && (left.ocrSubtitlePosition ?? 'below_original') === (right.ocrSubtitlePosition ?? 'below_original')
+    && (left.ocrRegion ?? 'bottom_25') === (right.ocrRegion ?? 'bottom_25')
     && sameSubtitleStyle(left, right)
     && left.dubbing === right.dubbing
     && left.ttsProvider === right.ttsProvider
@@ -472,7 +478,8 @@ function canReuseSubtitleCues(
   return sameSource(version.source, source)
     && version.settings.sourceLanguage === settings.sourceLanguage
     && version.settings.targetLanguage === settings.targetLanguage
-    && version.settings.preferPlatformCaptions === settings.preferPlatformCaptions;
+    && version.settings.preferPlatformCaptions === settings.preferPlatformCaptions
+    && (version.settings.captionSourceMethod ?? 'audio') === (settings.captionSourceMethod ?? 'audio');
 }
 
 function translationChanges(
@@ -639,6 +646,15 @@ function deserializeResultVersions(value: CreatorJson | undefined): TranslationR
         bilingual: settingsRecord.bilingual,
         subtitlePosition: settingsRecord.subtitlePosition,
         preferPlatformCaptions: settingsRecord.preferPlatformCaptions,
+        captionSourceMethod: settingsRecord.captionSourceMethod === 'ocr' || settingsRecord.captionSourceMethod === 'auto'
+          ? settingsRecord.captionSourceMethod
+          : 'audio',
+        ocrSubtitlePosition: settingsRecord.ocrSubtitlePosition === 'above_original' || settingsRecord.ocrSubtitlePosition === 'mask_replace'
+          ? settingsRecord.ocrSubtitlePosition
+          : 'below_original',
+        ocrRegion: settingsRecord.ocrRegion === 'bottom_33' || settingsRecord.ocrRegion === 'full'
+          ? settingsRecord.ocrRegion
+          : 'bottom_25',
         ...readSubtitleStyleSettings(settingsRecord, {}, undefined),
         dubbing: settingsRecord.dubbing,
         ttsProvider: isTtsProvider(settingsRecord.ttsProvider)
@@ -901,6 +917,21 @@ function legacyResultVersionsFromArtifacts(
           preferPlatformCaptions: typeof sourceState.preferPlatformCaptions === 'boolean'
             ? sourceState.preferPlatformCaptions
             : persisted?.settings.preferPlatformCaptions ?? true,
+          captionSourceMethod: sourceState.captionSourceMethod === 'ocr'
+            ? 'ocr'
+            : sourceState.captionSourceMethod === 'auto'
+              ? 'auto'
+              : persisted?.settings.captionSourceMethod ?? 'audio',
+          ocrSubtitlePosition: sourceState.ocrSubtitlePosition === 'above_original'
+            ? 'above_original'
+            : sourceState.ocrSubtitlePosition === 'mask_replace'
+              ? 'mask_replace'
+              : persisted?.settings.ocrSubtitlePosition ?? 'below_original',
+          ocrRegion: sourceState.ocrRegion === 'bottom_33'
+            ? 'bottom_33'
+            : sourceState.ocrRegion === 'full'
+              ? 'full'
+              : persisted?.settings.ocrRegion ?? 'bottom_25',
           ...readSubtitleStyleSettings(sourceState, fallbackState, persisted),
           dubbing: typeof sourceState.dubbing === 'boolean'
             ? sourceState.dubbing
@@ -1021,6 +1052,21 @@ function resultVersionFromSnapshot(
         'preferPlatformCaptions',
         true
       ),
+      captionSourceMethod: (sourceState.captionSourceMethod === 'ocr'
+        ? 'ocr'
+        : sourceState.captionSourceMethod === 'auto'
+          ? 'auto'
+          : persisted?.settings.captionSourceMethod ?? 'audio'),
+      ocrSubtitlePosition: (sourceState.ocrSubtitlePosition === 'above_original'
+        ? 'above_original'
+        : sourceState.ocrSubtitlePosition === 'mask_replace'
+          ? 'mask_replace'
+          : persisted?.settings.ocrSubtitlePosition ?? 'below_original'),
+      ocrRegion: (sourceState.ocrRegion === 'bottom_33'
+        ? 'bottom_33'
+        : sourceState.ocrRegion === 'full'
+          ? 'full'
+          : persisted?.settings.ocrRegion ?? 'bottom_25'),
       ...readSubtitleStyleSettings(sourceState, fallbackState, persisted),
       dubbing: readBooleanSetting(sourceState, fallbackState, persisted, 'dubbing', false),
       ttsProvider: readTtsProviderSetting(sourceState, fallbackState, persisted),
@@ -1764,6 +1810,9 @@ export default function VideoTranslationWorkspace(props: {
   const [bilingual, setBilingual] = useState(true);
   const [subtitlePosition, setSubtitlePosition] = useState<SubtitlePosition>('top');
   const [preferPlatformCaptions, setPreferPlatformCaptions] = useState(true);
+  const [captionSourceMethod, setCaptionSourceMethod] = useState<'audio' | 'ocr' | 'auto'>('audio');
+  const [ocrSubtitlePosition, setOcrSubtitlePosition] = useState<'below_original' | 'above_original' | 'mask_replace'>('below_original');
+  const [ocrRegion, setOcrRegion] = useState<'bottom_25' | 'bottom_33' | 'full'>('bottom_25');
   const [subtitleFont, setSubtitleFont] = useState<SubtitleFont>(defaultSubtitleStyle.subtitleFont);
   const [subtitleWeight, setSubtitleWeight] = useState<SubtitleWeight>(defaultSubtitleStyle.subtitleWeight);
   const [subtitleSize, setSubtitleSize] = useState<SubtitleSize>(defaultSubtitleStyle.subtitleSize);
@@ -1986,6 +2035,15 @@ export default function VideoTranslationWorkspace(props: {
     if (typeof persisted.bilingual === 'boolean') setBilingual(persisted.bilingual);
     if (persisted.subtitlePosition === 'top' || persisted.subtitlePosition === 'bottom') setSubtitlePosition(persisted.subtitlePosition);
     if (typeof persisted.preferPlatformCaptions === 'boolean') setPreferPlatformCaptions(persisted.preferPlatformCaptions);
+    if (persisted.captionSourceMethod === 'audio' || persisted.captionSourceMethod === 'ocr' || persisted.captionSourceMethod === 'auto') {
+      setCaptionSourceMethod(persisted.captionSourceMethod);
+    }
+    if (persisted.ocrSubtitlePosition === 'below_original' || persisted.ocrSubtitlePosition === 'above_original' || persisted.ocrSubtitlePosition === 'mask_replace') {
+      setOcrSubtitlePosition(persisted.ocrSubtitlePosition);
+    }
+    if (persisted.ocrRegion === 'bottom_25' || persisted.ocrRegion === 'bottom_33' || persisted.ocrRegion === 'full') {
+      setOcrRegion(persisted.ocrRegion);
+    }
     const persistedSubtitleStyle = readSubtitleStyleSettings(persisted, {}, undefined);
     setSubtitleFont(persistedSubtitleStyle.subtitleFont);
     setSubtitleWeight(persistedSubtitleStyle.subtitleWeight);
@@ -2183,6 +2241,9 @@ export default function VideoTranslationWorkspace(props: {
       bilingual,
       subtitlePosition,
       preferPlatformCaptions,
+      captionSourceMethod,
+      ocrSubtitlePosition,
+      ocrRegion,
       subtitleStyle,
       dubbing,
       ttsProvider,
@@ -2221,6 +2282,9 @@ export default function VideoTranslationWorkspace(props: {
     dubbing,
     furthestStep,
     preferPlatformCaptions,
+    captionSourceMethod,
+    ocrSubtitlePosition,
+    ocrRegion,
     resultTab,
     resultVersion,
     resultVersions,
@@ -2824,6 +2888,9 @@ export default function VideoTranslationWorkspace(props: {
       bilingual,
       subtitlePosition,
       preferPlatformCaptions,
+      captionSourceMethod,
+      ocrSubtitlePosition,
+      ocrRegion,
       subtitleFont,
       subtitleWeight,
       subtitleSize,
@@ -2867,6 +2934,9 @@ export default function VideoTranslationWorkspace(props: {
     setBilingual(settings.bilingual);
     setSubtitlePosition(settings.subtitlePosition);
     setPreferPlatformCaptions(settings.preferPlatformCaptions);
+    if (settings.captionSourceMethod) setCaptionSourceMethod(settings.captionSourceMethod);
+    if (settings.ocrSubtitlePosition) setOcrSubtitlePosition(settings.ocrSubtitlePosition);
+    if (settings.ocrRegion) setOcrRegion(settings.ocrRegion);
     setSubtitleFont(settings.subtitleFont);
     setSubtitleWeight(settings.subtitleWeight);
     setSubtitleSize(settings.subtitleSize);
@@ -3653,6 +3723,57 @@ export default function VideoTranslationWorkspace(props: {
   const subtitleImportControl = !subtitleOnly ? <VideoTranslationSubtitleImport
     sourceLanguage={sourceLanguage} targetLanguage={targetLanguage}
     disabled={submitting || activeStage !== undefined} onBusyChange={setSubtitleImportPending} /> : null;
+  const captionSourceMethodControl = !subtitleOnly ? (
+    <div className="video-translation-caption-source-method-group">
+      <div className="video-translation-inline-setting">
+        <span>{l('字幕识别方式', 'Subtitle recognition method')}</span>
+        <div role="group" aria-label={l('字幕识别方式', 'Subtitle recognition method')}>
+          <button
+            type="button"
+            aria-pressed={captionSourceMethod === 'audio'}
+            onClick={() => setCaptionSourceMethod('audio')}
+          >
+            {l('语音转录', 'Speech audio')}
+          </button>
+          <button
+            type="button"
+            aria-pressed={captionSourceMethod === 'ocr'}
+            onClick={() => setCaptionSourceMethod('ocr')}
+          >
+            {l('画面OCR', 'Video OCR')}
+          </button>
+        </div>
+      </div>
+      {captionSourceMethod === 'ocr' ? (
+        <div className="video-translation-inline-setting">
+          <span>{l('译文相对原字幕位置', 'Translation position vs burned-in sub')}</span>
+          <div role="group" aria-label={l('译文相对原字幕位置', 'Translation position vs burned-in sub')}>
+            <button
+              type="button"
+              aria-pressed={ocrSubtitlePosition === 'below_original'}
+              onClick={() => setOcrSubtitlePosition('below_original')}
+            >
+              {l('在原字幕下方', 'Below original')}
+            </button>
+            <button
+              type="button"
+              aria-pressed={ocrSubtitlePosition === 'above_original'}
+              onClick={() => setOcrSubtitlePosition('above_original')}
+            >
+              {l('在原字幕上方', 'Above original')}
+            </button>
+            <button
+              type="button"
+              aria-pressed={ocrSubtitlePosition === 'mask_replace'}
+              onClick={() => setOcrSubtitlePosition('mask_replace')}
+            >
+              {l('遮挡替换', 'Mask & replace')}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  ) : null;
   const platformCaptionsControl = !subtitleOnly ? <Switch
     checked={preferPlatformCaptions && sourceType === 'url'}
     label={l('优先使用平台字幕', 'Prefer platform subtitles')}
@@ -3974,7 +4095,7 @@ export default function VideoTranslationWorkspace(props: {
               subtitleSavePending={submitting}
               immersive={subtitleImmersive}
               editorSettings={!selectedSubtitleOnly ? {
-                language: <>{languageControls}<div className="video-translation-toggle-list">{subtitleImportControl}{platformCaptionsControl}</div></>,
+                language: <>{languageControls}<div className="video-translation-toggle-list">{subtitleImportControl}{captionSourceMethodControl}{platformCaptionsControl}</div></>,
                 style: <>{subtitleLayoutControls}{subtitleStyleChoices}</>,
                 voice: dubbingSettings,
                 output: <>{compositionControl}{composeVideo ? <>{outputFormatControl}{verticalTitleControls}</> : null}</>,
@@ -4117,6 +4238,7 @@ export default function VideoTranslationWorkspace(props: {
 
               <div className="video-translation-toggle-list" data-agent-focus={agentFocus === 'subtitles'}>
                 {subtitleImportControl}
+                {captionSourceMethodControl}
                 {subtitleLayoutControls}
                 {platformCaptionsControl}
               </div>

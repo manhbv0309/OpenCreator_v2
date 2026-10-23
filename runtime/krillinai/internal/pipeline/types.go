@@ -24,6 +24,7 @@ const (
 	CaptionSourceAuto     CaptionSource = "auto"
 	CaptionSourcePlatform CaptionSource = "platform"
 	CaptionSourceWhisper  CaptionSource = "whisper"
+	CaptionSourceOCR      CaptionSource = "ocr"
 )
 
 type LineMode string

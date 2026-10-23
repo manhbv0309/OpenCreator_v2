@@ -30,6 +30,7 @@ import { createKrillinCliExecutionPlan } from './execution-plan.js';
 import { readKrillinRuntimeManifest, resolveInside } from './manifest.js';
 import type { YtDlpRuntime } from '../yt-dlp/runtime.js';
 import { assessKrillinTranscription } from './transcription-language.js';
+import { extractVideoSubtitleOcr, type OcrRegion } from '../ocr/video-subtitle-ocr.js';
 
 export function createKrillinExecutor(input: {
   resourceRoot: string;
@@ -52,6 +53,45 @@ export function createKrillinExecutor(input: {
       });
       const ffprobe = executablePath(input.resourceRoot, /(?:^|\/)ffprobe(?:\.exe)?$/i);
       const materializedArtifacts = await writeArtifactIndex(input.jobsRoot, stage);
+
+      if (stage.stageRun.stageId === 'subtitle' && stage.job.state?.captionSourceMethod === 'ocr') {
+        const hasExistingSub = materializedArtifacts.some(a => a.kind === 'source_subtitle' || a.kind === 'target_subtitle');
+        if (!hasExistingSub) {
+          const sourceVideo = materializedArtifacts.find(a => a.kind === 'source_video');
+          if (sourceVideo?.path) {
+            let ffmpeg: string | undefined;
+            try {
+              ffmpeg = executablePath(input.resourceRoot, /(?:^|\/)ffmpeg(?:\.exe)?$/i);
+            } catch {
+              ffmpeg = 'ffmpeg';
+            }
+            const ocrResult = await extractVideoSubtitleOcr({
+              videoPath: sourceVideo.path,
+              ffmpegPath: ffmpeg,
+              originLang: typeof stage.job.state?.sourceLanguage === 'string' ? stage.job.state.sourceLanguage : undefined,
+              ocrRegion: (stage.job.state?.ocrRegion as OcrRegion) ?? 'bottom_25',
+              workdir: stage.workdir,
+              reportProgress(prog) {
+                stage.reportProgress({
+                  phase: prog.phase,
+                  percent: prog.percent,
+                  message: prog.message
+                });
+              }
+            });
+            if (ocrResult.srtContent) {
+              const ocrSrtPath = join(stage.workdir, 'ocr_source.srt');
+              await writeFile(ocrSrtPath, ocrResult.srtContent, 'utf8');
+              materializedArtifacts.push({
+                id: 'ocr-source-subtitle',
+                kind: 'source_subtitle',
+                path: ocrSrtPath
+              });
+            }
+          }
+        }
+      }
+
       const options = buildKrillinStageOptions(stage);
       let artifacts: KrillinResultArtifact[];
       let captionFallbackProgress: Record<string, CreatorJson> = {};
@@ -281,7 +321,12 @@ export function buildKrillinStageOptions(input: CreatorExecutorInput): Record<st
     targetLanguage: normalizeKrillinLanguage(
       typeof state.targetLanguage === 'string' ? state.targetLanguage : undefined
     ),
-    captionSource: state.preferPlatformCaptions === false ? 'whisper' : 'any',
+    captionSource: state.captionSourceMethod === 'ocr'
+      ? 'ocr'
+      : (state.preferPlatformCaptions === false ? 'whisper' : 'any'),
+    captionSourceMethod: state.captionSourceMethod ?? 'audio',
+    ocrSubtitlePosition: state.ocrSubtitlePosition ?? 'below_original',
+    ocrRegion: state.ocrRegion ?? 'bottom_25',
     sourceOnly: input.job.templateId === 'stickman-video'
       && input.stageRun.stageId === 'source-transcript',
     prepareVideo: input.job.templateId !== 'video-translation',
@@ -312,7 +357,7 @@ export function buildKrillinStageOptions(input: CreatorExecutorInput): Record<st
           blur: state.subtitleShadowBlur
         })
       }) as CreatorJson : undefined
-    ))
+    ), { ocrSubtitlePosition: state.ocrSubtitlePosition as string | undefined })
   });
 }
 
@@ -342,7 +387,10 @@ function combineKrillinFallbackFailures(platformFailure: KrillinCliError, fallba
     message, {}, publicFactsFromFailure(fallbackFailure), { cause: fallbackFailure });
 }
 
-export function buildKrillinSubtitleStyle(value: CreatorJson | undefined): Record<string, unknown> | undefined {
+export function buildKrillinSubtitleStyle(
+  value: CreatorJson | undefined,
+  ocrOptions?: { ocrSubtitlePosition?: string }
+): Record<string, unknown> | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
   if (Object.keys(value).length === 0) return undefined;
   const parsed = creatorSubtitleStyleSchema.safeParse(value);
@@ -363,6 +411,12 @@ export function buildKrillinSubtitleStyle(value: CreatorJson | undefined): Recor
     ? `\\xshad${formatAssNumber(style.shadow.offsetX)}\\yshad${formatAssNumber(style.shadow.offsetY)}\\blur${formatAssNumber(style.shadow.blur)}`
     : '';
   const sizes = subtitleFontSizes(style.fontSize);
+
+  const ocrPos = ocrOptions?.ocrSubtitlePosition;
+  const borderStyle = ocrPos === 'mask_replace' ? 3 : 1;
+  const horizontalMajorMarginV = ocrPos === 'below_original' ? 10 : ocrPos === 'above_original' ? 70 : 20;
+  const verticalMajorMarginV = ocrPos === 'below_original' ? 45 : ocrPos === 'above_original' ? 140 : 101;
+
   const createStyle = (
     name: 'Major' | 'Minor',
     fontSize: number,
@@ -384,7 +438,7 @@ export function buildKrillinSubtitleStyle(value: CreatorJson | undefined): Recor
     scale_y: 100,
     spacing: 0,
     angle: 0,
-    border_style: 1,
+    border_style: borderStyle,
     outline: style.outlineWidth,
     shadow,
     alignment: 2,
@@ -397,11 +451,11 @@ export function buildKrillinSubtitleStyle(value: CreatorJson | undefined): Recor
   return {
     version: 1,
     horizontal: {
-      major: createStyle('Major', sizes.horizontalMajor, style.primaryColor, 20),
+      major: createStyle('Major', sizes.horizontalMajor, style.primaryColor, horizontalMajorMarginV),
       minor: createStyle('Minor', sizes.horizontalMinor, style.secondaryColor, 30)
     },
     vertical: {
-      major: createStyle('Major', sizes.verticalMajor, style.primaryColor, 101),
+      major: createStyle('Major', sizes.verticalMajor, style.primaryColor, verticalMajorMarginV),
       minor: createStyle('Minor', sizes.verticalMinor, style.secondaryColor, 92)
     }
   };

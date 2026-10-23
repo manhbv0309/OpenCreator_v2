@@ -96,7 +96,7 @@ func GenerateSubtitles(ctx context.Context, svc StageService, req SubtitleReques
 	}
 
 	var platformCaptionErr error
-	if IsYouTubeInput(req.Input) && req.CaptionSource != CaptionSourceWhisper {
+	if IsYouTubeInput(req.Input) && req.CaptionSource != CaptionSourceWhisper && req.CaptionSource != CaptionSourceOCR {
 		reportSubtitleProgress(req, "reading_platform_captions", 5, "正在获取平台字幕")
 		stepParam.TaskPtr.SetProgressReporter(func(percent uint8) {
 			phase, message, overall := platformSubtitleProgress(percent)
@@ -308,7 +308,7 @@ func subtitleStepParam(req SubtitleRequest) *types.SubtitleTaskStepParam {
 		VideoSrc: req.Input,
 		Status:   types.SubtitleTaskStatusProcessing,
 	}
-	vttSwitch := req.InputSRT == "" && IsYouTubeInput(req.Input) && req.CaptionSource != CaptionSourceWhisper
+	vttSwitch := req.InputSRT == "" && IsYouTubeInput(req.Input) && req.CaptionSource != CaptionSourceWhisper && req.CaptionSource != CaptionSourceOCR
 	embedSubtitleVideoType := "none"
 	if req.PrepareVideo && !vttSwitch {
 		embedSubtitleVideoType = "all"

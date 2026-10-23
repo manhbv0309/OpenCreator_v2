@@ -27,6 +27,9 @@ function createVideoTranslationTemplateDefinition(version: 1 | 2): CreatorTempla
       sourceLanguage: z.string().default('zh_cn'),
       targetLanguage: z.string().default('en'),
       preferPlatformCaptions: z.boolean().default(true),
+      captionSourceMethod: z.enum(['audio', 'ocr', 'auto']).default('audio'),
+      ocrSubtitlePosition: z.enum(['below_original', 'above_original', 'mask_replace']).default('below_original'),
+      ocrRegion: z.enum(['bottom_25', 'bottom_33', 'full']).default('bottom_25'),
       bilingual: z.boolean().default(true),
       subtitlePosition: z.enum(['top', 'bottom']).default('top'),
       ...(version === 2
